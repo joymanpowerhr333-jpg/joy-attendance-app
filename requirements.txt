@@ -1,0 +1,7 @@
+streamlit
+supabase
+qrcode
+opencv-python-headless
+numpy
+pandas
+Pillow
