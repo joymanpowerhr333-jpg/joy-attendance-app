@@ -12,12 +12,13 @@ import os
 # --- PAGE CONFIGURATION & UI STYLING ---
 st.set_page_config(page_title="Joy Corporate Solutions", page_icon="🏢", layout="wide")
 
+# Function to encode local image to Base64 for the CSS watermark
 def get_base64_of_bin_file(bin_file):
     with open(bin_file, 'rb') as f:
         data = f.read()
     return base64.b64encode(data).decode()
 
-# Load the logo for the watermark
+# Try to load the logo for the watermark.
 watermark_css = ""
 logo_path = "logo.png"
 if os.path.exists(logo_path):
@@ -39,59 +40,70 @@ if os.path.exists(logo_path):
     </style>
     """
 
-# --- INJECT 3D REALISTIC CSS & WATERMARK ---
+# --- INJECT 3D REALISTIC CSS, CENTERING & WATERMARK ---
 st.markdown(watermark_css, unsafe_allow_html=True)
 st.markdown("""
     <style>
-    .stApp { background-color: #eef2f5; }
+    /* Premium App Background */
+    .stApp, .stApp > header { background-color: #eef2f5 !important; }
     
-    h1, h2, h3, h4 { 
+    /* 3D Typography & Global Centering - FORCED DARK TEXT TO BEAT DARK MODE */
+    h1, h2, h3, h4, p, label, span, div[data-testid="stMarkdownContainer"] > p { 
         color: #1a365d !important; 
-        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
-        text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif !important; 
         text-align: center;
     }
     
-    p { text-align: center; }
+    h1, h2, h3, h4 { text-shadow: 2px 2px 4px rgba(0,0,0,0.1); }
+    
+    /* Center Streamlit Tabs and Radio Buttons */
     .stTabs [data-baseweb="tab-list"] { justify-content: center; }
     div[role="radiogroup"] { justify-content: center; }
     div.stButton { display: flex; justify-content: center; }
     
+    /* 3D Realistic Neumorphic Buttons - FORCED ORANGE GRADIENT */
     div.stButton > button:first-child {
-        background: linear-gradient(145deg, #f68a28, #df7113);
-        box-shadow: 4px 4px 10px #c5cbd1, -4px -4px 10px #ffffff;
-        color: white;
-        border-radius: 12px;
-        border: 1px solid rgba(255,255,255,0.2);
-        padding: 12px 30px;
-        font-weight: 700;
-        letter-spacing: 0.5px;
-        transition: all 0.2s ease-in-out;
+        background: linear-gradient(145deg, #f68a28, #df7113) !important;
+        box-shadow: 4px 4px 10px #c5cbd1, -4px -4px 10px #ffffff !important;
+        color: white !important;
+        border-radius: 12px !important;
+        border: 1px solid rgba(255,255,255,0.2) !important;
+        padding: 12px 30px !important;
+        font-weight: 700 !important;
+        letter-spacing: 0.5px !important;
+        transition: all 0.2s ease-in-out !important;
         width: 100%;
         max-width: 300px;
     }
+    div.stButton > button:first-child * {
+        color: white !important;
+    }
     div.stButton > button:first-child:hover {
-        background: linear-gradient(145deg, #df7113, #f68a28);
-        box-shadow: inset 4px 4px 8px rgba(0,0,0,0.2), inset -4px -4px 8px rgba(255,255,255,0.1);
+        background: linear-gradient(145deg, #df7113, #f68a28) !important;
+        box-shadow: inset 4px 4px 8px rgba(0,0,0,0.2), inset -4px -4px 8px rgba(255,255,255,0.1) !important;
         transform: translateY(2px);
     }
     
+    /* 3D Glassmorphism Forms & Containers */
     .stForm, div[data-testid="stExpander"] { 
-        background: rgba(255, 255, 255, 0.65);
-        backdrop-filter: blur(12px);
-        border-radius: 16px; 
-        border: 1px solid rgba(255, 255, 255, 0.8);
-        box-shadow: 8px 8px 20px #d1d9e6, -8px -8px 20px #ffffff;
-        padding: 25px;
+        background: rgba(255, 255, 255, 0.65) !important;
+        backdrop-filter: blur(12px) !important;
+        border-radius: 16px !important; 
+        border: 1px solid rgba(255, 255, 255, 0.8) !important;
+        box-shadow: 8px 8px 20px #d1d9e6, -8px -8px 20px #ffffff !important;
+        padding: 25px !important;
         margin: 0 auto;
     }
     
-    input, select, .stTextInput > div > div > input {
+    /* Input Boxes 3D Inset Effect - FORCED DARK TEXT */
+    input, select, .stTextInput > div > div > input, div[data-baseweb="select"] > div {
         border-radius: 8px !important;
         background: #eef2f5 !important;
         border: none !important;
         box-shadow: inset 3px 3px 6px #d1d9e6, inset -3px -3px 6px #ffffff !important;
-        text-align: center;
+        text-align: center !important;
+        color: #1a365d !important;
+        -webkit-text-fill-color: #1a365d !important;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -108,18 +120,16 @@ if "hr_username" not in st.session_state:
     st.session_state.hr_username = ""
 if "super_logged_in" not in st.session_state:
     st.session_state.super_logged_in = False
-    
-# These two new memory items handle the automatic camera reset!
 if "camera_key" not in st.session_state:
     st.session_state.camera_key = 1
 if "success_msg" not in st.session_state:
     st.session_state.success_msg = ""
 
-
 # ==========================================
 #         STATE 1: THE MAIN LOGIN SCREEN
 # ==========================================
 if not st.session_state.hr_logged_in and not st.session_state.super_logged_in:
+    
     col_left, col_center, col_right = st.columns([1, 2, 1])
     
     with col_center:
@@ -166,6 +176,7 @@ if not st.session_state.hr_logged_in and not st.session_state.super_logged_in:
 #         STATE 2: THE HR DASHBOARD
 # ==========================================
 elif st.session_state.hr_logged_in:
+    
     col_l, col_main, col_r = st.columns([1, 8, 1])
     
     with col_main:
@@ -186,17 +197,15 @@ elif st.session_state.hr_logged_in:
         if hr_action == "⏱️ Record Attendance":
             st.markdown("### ⏱️ Daily Attendance Capture")
             
-            # Display the success message right at the top AFTER the auto-reset happens
             if st.session_state.success_msg:
                 st.success(st.session_state.success_msg)
-                st.session_state.success_msg = "" # Clear it so it disappears on the next scan
+                st.session_state.success_msg = ""
             
             tab1, tab2 = st.tabs(["📸 3D QR Scanner", "⌨️ Manual Entry"])
             
             with tab1:
                 st.info("Hold the Employee QR Code up to the camera. The scanner will automatically reset for the next person once submitted.")
                 
-                # The camera now uses a dynamic key. When we change the key, the camera immediately resets!
                 scan_image = st.camera_input("Scanner Camera", key=f"qr_cam_{st.session_state.camera_key}")
                 
                 if scan_image and st.button("Submit QR Attendance"):
@@ -207,8 +216,6 @@ elif st.session_state.hr_logged_in:
                     
                     if data:
                         supabase.table("attendance").insert({"emp_id": data, "method": "QR Code"}).execute()
-                        
-                        # Save the success message to memory, increment the key, and instantly refresh!
                         st.session_state.success_msg = f"✅ Attendance successfully recorded for ID: **{data}**"
                         st.session_state.camera_key += 1
                         st.rerun()
@@ -415,6 +422,7 @@ elif st.session_state.hr_logged_in:
 #         STATE 3: THE SUPER ADMIN DASHBOARD
 # ==========================================
 elif st.session_state.super_logged_in:
+    
     col_l, col_main, col_r = st.columns([1, 6, 1])
     
     with col_main:
