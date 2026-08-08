@@ -40,34 +40,28 @@ if os.path.exists(logo_path):
     </style>
     """
 
-# --- INJECT 3D REALISTIC CSS, CENTERING & WATERMARK ---
+# --- INJECT 3D REALISTIC CSS, CENTERING & ADAPTIVE DARK/LIGHT MODE ---
 st.markdown(watermark_css, unsafe_allow_html=True)
 st.markdown("""
     <style>
-    /* Premium App Background */
-    .stApp, .stApp > header { background-color: #eef2f5 !important; }
-    
-    /* 3D Typography & Global Centering - FORCED DARK TEXT TO BEAT DARK MODE */
+    /* 3D Typography & Global Centering - ADAPTIVE TO DARK/LIGHT MODE */
     h1, h2, h3, h4, p, label, span, div[data-testid="stMarkdownContainer"] > p { 
-        color: #1a365d !important; 
-        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif !important; 
         text-align: center;
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif !important; 
     }
-    
-    h1, h2, h3, h4 { text-shadow: 2px 2px 4px rgba(0,0,0,0.1); }
     
     /* Center Streamlit Tabs and Radio Buttons */
     .stTabs [data-baseweb="tab-list"] { justify-content: center; }
     div[role="radiogroup"] { justify-content: center; }
     div.stButton { display: flex; justify-content: center; }
     
-    /* 3D Realistic Neumorphic Buttons - FORCED ORANGE GRADIENT */
+    /* 3D Realistic Neumorphic Buttons - FORCED ORANGE GRADIENT (Looks great on dark & light) */
     div.stButton > button:first-child {
         background: linear-gradient(145deg, #f68a28, #df7113) !important;
-        box-shadow: 4px 4px 10px #c5cbd1, -4px -4px 10px #ffffff !important;
+        box-shadow: 0px 4px 15px rgba(223, 113, 19, 0.4) !important;
         color: white !important;
         border-radius: 12px !important;
-        border: 1px solid rgba(255,255,255,0.2) !important;
+        border: none !important;
         padding: 12px 30px !important;
         font-weight: 700 !important;
         letter-spacing: 0.5px !important;
@@ -80,30 +74,29 @@ st.markdown("""
     }
     div.stButton > button:first-child:hover {
         background: linear-gradient(145deg, #df7113, #f68a28) !important;
-        box-shadow: inset 4px 4px 8px rgba(0,0,0,0.2), inset -4px -4px 8px rgba(255,255,255,0.1) !important;
-        transform: translateY(2px);
+        box-shadow: 0px 6px 20px rgba(223, 113, 19, 0.6) !important;
+        transform: translateY(-2px);
     }
     
-    /* 3D Glassmorphism Forms & Containers */
+    /* Glassmorphism Forms & Containers - ADAPTIVE */
     .stForm, div[data-testid="stExpander"] { 
-        background: rgba(255, 255, 255, 0.65) !important;
+        background: var(--secondary-background-color) !important;
         backdrop-filter: blur(12px) !important;
         border-radius: 16px !important; 
-        border: 1px solid rgba(255, 255, 255, 0.8) !important;
-        box-shadow: 8px 8px 20px #d1d9e6, -8px -8px 20px #ffffff !important;
+        border: 1px solid rgba(128, 128, 128, 0.2) !important;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1) !important;
         padding: 25px !important;
         margin: 0 auto;
     }
     
-    /* Input Boxes 3D Inset Effect - FORCED DARK TEXT */
+    /* Input Boxes 3D Effect - ADAPTIVE */
     input, select, .stTextInput > div > div > input, div[data-baseweb="select"] > div {
         border-radius: 8px !important;
-        background: #eef2f5 !important;
-        border: none !important;
-        box-shadow: inset 3px 3px 6px #d1d9e6, inset -3px -3px 6px #ffffff !important;
+        background: var(--background-color) !important;
+        border: 1px solid rgba(128, 128, 128, 0.3) !important;
         text-align: center !important;
-        color: #1a365d !important;
-        -webkit-text-fill-color: #1a365d !important;
+        color: var(--text-color) !important;
+        -webkit-text-fill-color: var(--text-color) !important;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -134,12 +127,14 @@ if not st.session_state.hr_logged_in and not st.session_state.super_logged_in:
     
     with col_center:
         if os.path.exists(logo_path):
-            logo_col1, logo_col2, logo_col3 = st.columns([1, 1, 1])
+            # Changed the column ratio from [1, 1, 1] to [5, 2, 5]. 
+            # This makes the middle column exactly 50% smaller while staying perfectly centered!
+            logo_col1, logo_col2, logo_col3 = st.columns([5, 2, 5])
             with logo_col2:
                 st.image(logo_path, use_container_width=True)
                 
         st.markdown("<h1>Joy Corporate Solutions</h1>", unsafe_allow_html=True)
-        st.markdown("<p style='color: #666; font-size: 18px;'>Enterprise Attendance Portal</p><br>", unsafe_allow_html=True)
+        st.markdown("<p style='font-size: 18px;'>Enterprise Attendance Portal</p><br>", unsafe_allow_html=True)
         
         login_type = st.selectbox("Select Portal Identity", ["HR User Portal", "Super Admin Portal"])
         st.write("<br>", unsafe_allow_html=True)
