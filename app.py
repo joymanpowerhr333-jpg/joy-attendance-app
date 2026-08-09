@@ -106,11 +106,6 @@ def generate_id_card(emp_id, name, department, mobile):
     draw.text((20, height + 110), f"Phone: {mobile}", fill="#666666", font=font_small)
     return id_card
 
-def check_punch_status(emp_id):
-    res = supabase.table("attendance").select("punch_type").eq("emp_id", emp_id).order("id", desc=True).limit(1).execute()
-    if not res.data: return "Punch In"
-    return "Punch In" if res.data[0]['punch_type'] == "Punch Out" else "Punch Out"
-
 def render_shift_master_ui():
     st.markdown("### ⚙️ Shift Master Management")
     df_shifts = get_shift_data()
@@ -273,13 +268,11 @@ elif st.session_state.hr_logged_in:
         
         # --- 1. RECORD ATTENDANCE ---
         if hr_action == "⏱️ Record Attendance":
-            st.markdown("### ⏱️ Daily Attendance Capture (In / Out)")
+            st.markdown("### ⏱️ Daily Attendance Capture")
             
             tab1, tab2 = st.tabs(["📸 Live QR Scanner", "⌨️ Manual Entry"])
             
             with tab1:
-                st.info("Scanner alternates automatically (Scan 1 = In, Scan 2 = Out). Point your camera at the QR code.")
-                
                 # IF A SCAN JUST HAPPENED: Show the confirmation screen
                 if st.session_state.last_scanned_id:
                     if st.session_state.success_msg:
@@ -296,33 +289,30 @@ elif st.session_state.hr_logged_in:
                         st.session_state.camera_key += 1
                         st.rerun()
                 
-                # IF NO SCAN YET: Show the active scanner
+                # IF NO SCAN YET: Show the action selector and active scanner
                 else:
+                    # Action Selector
+                    punch_action = st.radio("Select Scan Type:", ["Punch In", "Punch Out", "Break Start", "Break End"], horizontal=True)
+                    st.info(f"Currently scanning for: **{punch_action}**. Point camera at QR code.")
+                    
                     qr_code = qrcode_scanner(key=f"qr_cam_{st.session_state.camera_key}")
                     
                     if qr_code:
-                        punch_type = check_punch_status(qr_code)
-                        if punch_type == "Limit Reached":
-                            st.session_state.error_msg = f"⚠️ Limit Reached: Employee ID {qr_code} has already Punched In and Out today!"
-                        else:
-                            supabase.table("attendance").insert({"emp_id": qr_code, "method": "QR Code", "punch_type": punch_type}).execute()
-                            st.session_state.success_msg = f"✅ {punch_type} successfully recorded for ID: **{qr_code}**"
-                        
-                        # Lock in the scan to trigger the confirmation screen
+                        # Log the scan with the exact action selected by the user
+                        supabase.table("attendance").insert({"emp_id": qr_code, "method": "QR Code", "punch_type": punch_action}).execute()
+                        st.session_state.success_msg = f"✅ **{punch_action}** successfully recorded for ID: **{qr_code}**"
                         st.session_state.last_scanned_id = qr_code
                         st.rerun()
             
             with tab2:
                 with st.form("manual_entry_form", clear_on_submit=True):
+                    manual_action = st.radio("Select Manual Action:", ["Punch In", "Punch Out", "Break Start", "Break End"], horizontal=True)
                     manual_id = st.text_input("Enter Employee ID Number")
                     manual_submit = st.form_submit_button("Record Manual Punch")
+                    
                     if manual_submit and manual_id:
-                        punch_type = check_punch_status(manual_id)
-                        if punch_type == "Limit Reached":
-                            st.warning(f"⚠️ Limit Reached: Employee ID {manual_id} has already Punched In and Out today!")
-                        else:
-                            supabase.table("attendance").insert({"emp_id": manual_id, "method": "Manual Entry", "punch_type": punch_type}).execute()
-                            st.success(f"✅ {punch_type} successfully recorded for ID: **{manual_id}**")
+                        supabase.table("attendance").insert({"emp_id": manual_id, "method": "Manual Entry", "punch_type": manual_action}).execute()
+                        st.success(f"✅ **{manual_action}** successfully recorded for ID: **{manual_id}**")
                         
         # --- 2. ENROLL EMPLOYEES ---
         elif hr_action == "👤 Enroll Employees":
