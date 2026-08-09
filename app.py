@@ -16,6 +16,9 @@ st.set_page_config(page_title="Joy Corporate Solutions", page_icon="🏢", layou
 # Set up Indian Standard Time (IST) globally
 IST = timezone(timedelta(hours=5, minutes=30))
 
+# Standard Shift Options List
+SHIFT_OPTIONS = ["General", "1st shift", "2nd Shift", "3rd Shift", "12Hr Day", "12Hr Night"]
+
 def get_base64_of_bin_file(bin_file):
     with open(bin_file, 'rb') as f:
         data = f.read()
@@ -254,7 +257,7 @@ elif st.session_state.hr_logged_in:
                     with col2:
                         department = st.text_input("Department")
                         mobile = st.text_input("Mobile Number")
-                        shift = st.selectbox("Shift", ["General", "Morning", "Evening", "Night"])
+                        shift = st.selectbox("Shift", SHIFT_OPTIONS)
                     
                     submit_button = st.form_submit_button("✨ Generate Profile & ID Card")
                 
@@ -277,8 +280,8 @@ elif st.session_state.hr_logged_in:
                 st.info("Upload a CSV file to enroll multiple employees at once.")
                 st.markdown("**Required Columns:** `emp_id`, `name`, `department`, `mobile`, `shift`")
                 
-                # Provide a sample CSV to download
-                sample_csv = "emp_id,name,department,mobile,shift\n1001,John Doe,Sales,9876543210,General\n1002,Jane Smith,IT,8765432109,Morning"
+                # Sample CSV with the updated shift names
+                sample_csv = "emp_id,name,department,mobile,shift\n1001,John Doe,Sales,9876543210,General\n1002,Jane Smith,IT,8765432109,1st shift\n1003,Raj Kumar,Production,9812345678,12Hr Day"
                 st.download_button("📥 Download Sample CSV Template", data=sample_csv, file_name="bulk_enroll_template.csv", mime="text/csv")
                 
                 uploaded_file = st.file_uploader("Upload Completed CSV", type=["csv"])
@@ -311,7 +314,6 @@ elif st.session_state.hr_logged_in:
             
             dir_tab1, dir_tab2, dir_tab3, dir_tab4 = st.tabs(["📋 Roster", "🪪 Download ID Cards", "🕒 Shift Mapping", "🔄 Status"])
             
-            # Helper to fetch employees safely
             def get_all_employees():
                 res = supabase.table("employees").select("*").execute()
                 if res.data:
@@ -344,7 +346,6 @@ elif st.session_state.hr_logged_in:
                 st.markdown("#### Click to Download Employee ID Card")
                 if not df_emp_main.empty:
                     active_emps = df_emp_main[df_emp_main["status"] == "Active"]
-                    # Create a readable dropdown list
                     emp_dict = {f"{row['name']} (ID: {row['emp_id']})": row for _, row in active_emps.iterrows()}
                     selected_emp = st.selectbox("Select Employee to Generate ID", options=list(emp_dict.keys()))
                     
@@ -352,7 +353,6 @@ elif st.session_state.hr_logged_in:
                         emp_data = emp_dict[selected_emp]
                         id_img = generate_id_card(emp_data['emp_id'], emp_data['name'], emp_data.get('department',''), emp_data.get('mobile',''))
                         
-                        # Convert PIL image to byte array for downloading
                         buf = io.BytesIO()
                         id_img.save(buf, format="PNG")
                         byte_im = buf.getvalue()
@@ -378,7 +378,7 @@ elif st.session_state.hr_logged_in:
                         if not df_emp_main.empty:
                             emp_map_dict = {f"{r['name']} (ID: {r['emp_id']})": r['emp_id'] for _, r in df_emp_main.iterrows()}
                             map_sel = st.selectbox("Select Employee", list(emp_map_dict.keys()))
-                            new_shift = st.selectbox("Assign Shift", ["General", "Morning", "Evening", "Night"])
+                            new_shift = st.selectbox("Assign Shift", SHIFT_OPTIONS)
                             if st.form_submit_button("Update Shift"):
                                 emp_target_id = emp_map_dict[map_sel]
                                 supabase.table("employees").update({"shift": new_shift}).eq("emp_id", emp_target_id).execute()
@@ -386,7 +386,7 @@ elif st.session_state.hr_logged_in:
                         else: st.write("No employees available.")
                 with s_col2:
                     st.markdown("**Bulk Update**")
-                    bulk_shift_csv = "emp_id,shift\n1001,Morning\n1002,Night"
+                    bulk_shift_csv = "emp_id,shift\n1001,1st shift\n1002,2nd Shift\n1003,12Hr Night"
                     st.download_button("📥 Shift Mapping Template", data=bulk_shift_csv, file_name="shift_mapping.csv", mime="text/csv")
                     shift_file = st.file_uploader("Upload Shift CSV", type=["csv"])
                     if shift_file and st.button("Update Bulk Shifts"):
@@ -448,7 +448,6 @@ elif st.session_state.hr_logged_in:
                 df_att = pd.DataFrame(att_res.data)
                 df_emp = pd.DataFrame(emp_res.data) if emp_res.data else pd.DataFrame(columns=["emp_id", "name", "department", "shift"])
                 
-                # Make sure punch_type exists for older records
                 if "punch_type" not in df_att.columns: df_att["punch_type"] = "N/A"
                 
                 if not df_emp.empty: df = pd.merge(df_att, df_emp, on="emp_id", how="left")
