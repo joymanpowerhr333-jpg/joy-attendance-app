@@ -94,20 +94,23 @@ def generate_id_card(emp_id, name, department, mobile):
     draw.text((20, height + 110), f"Phone: {mobile}", fill="#666666", font=font_small)
     return id_card
 
-# --- DASHBOARD ---
+# --- DASHBOARD WITH MTD ABSENT DAYS ANALYTICS ---
 def render_dashboard(role, dept):
     st.markdown("### 📈 Real-Time Attendance Analytics")
     df_emp = get_all_employees()
     df_att = get_all_attendance()
     df_shf = get_shift_data()
     
-    if role == "Dept Admin" and not df_emp.empty: 
+    if df_emp.empty:
+        st.info("No employee data available to generate analytics.")
+        return
+
+    if role == "Dept Admin": 
         df_emp = df_emp[df_emp['department'] == dept]
         
     col1, col2 = st.columns(2)
     with col1:
         if role in ["HR", "Super Admin"]:
-            # FIX: Get departments from BOTH employees and hr_users table
             dept_set = set()
             if not df_emp.empty: dept_set.update(df_emp['department'].dropna().unique().tolist())
             try:
@@ -139,17 +142,19 @@ def render_dashboard(role, dept):
         
     today_str = datetime.now(IST).strftime('%Y-%m-%d')
     yesterday_str = (datetime.now(IST) - timedelta(days=1)).strftime('%Y-%m-%d')
+    current_month = datetime.now(IST).month
+    current_year = datetime.now(IST).year
     
     if not df_att_dash.empty:
         today_att = df_att_dash[df_att_dash['date_only'] == today_str]['emp_id'].nunique()
         yest_att = df_att_dash[df_att_dash['date_only'] == yesterday_str]['emp_id'].nunique()
         
-        current_month = datetime.now(IST).month
-        df_mtd = df_att_dash[pd.to_datetime(df_att_dash['time_logged']).dt.month == current_month]
+        df_mtd = df_att_dash[(pd.to_datetime(df_att_dash['time_logged']).dt.month == current_month) & (pd.to_datetime(df_att_dash['time_logged']).dt.year == current_year)]
         days_in_month = df_mtd['date_only'].nunique()
         avg_mtd_nos = round(len(df_mtd.drop_duplicates(subset=['emp_id', 'date_only'])) / days_in_month) if days_in_month > 0 else 0
     else:
-        today_att = yest_att = avg_mtd_nos = 0
+        today_att = yest_att = avg_mtd_nos = days_in_month = 0
+        df_mtd = pd.DataFrame()
         
     today_pct = round((today_att / active_emp_count * 100) if active_emp_count else 0, 1)
     yest_pct = round((yest_att / active_emp_count * 100) if active_emp_count else 0, 1)
@@ -165,12 +170,20 @@ def render_dashboard(role, dept):
 
     st.write("---")
     st.markdown("### 🚨 Absenteeism & Tardiness Leaderboard")
-    st.caption("Identifies departments, shifts, and employees with the highest absence rates.")
+    st.caption("Identifies departments, shifts, and employees with the highest absence rates (includes total absent days month-to-date).")
 
     today_present_ids = df_att_dash[df_att_dash['date_only'] == today_str]['emp_id'].unique() if not df_att_dash.empty else []
     
     if not df_dash_emp.empty:
         df_dash_emp['Today Status'] = df_dash_emp['emp_id'].apply(lambda x: 'Present' if x in today_present_ids else 'Absent')
+        
+        # Calculate Number of Absent Days (MTD)
+        if not df_mtd.empty:
+            emp_present_counts = df_mtd.groupby('emp_id')['date_only'].nunique().to_dict()
+            df_dash_emp['MTD Present'] = df_dash_emp['emp_id'].map(emp_present_counts).fillna(0)
+            df_dash_emp['MTD Absent Days'] = days_in_month - df_dash_emp['MTD Present']
+        else:
+            df_dash_emp['MTD Absent Days'] = 0
 
         d_tab1, d_tab2, d_tab3 = st.tabs(["🏢 Department-Wise", "🕒 Shift-Wise", "👤 Individual Ranks"])
 
@@ -178,7 +191,8 @@ def render_dashboard(role, dept):
             dept_summary = df_dash_emp.groupby('department').agg(
                 Total_Employees=('emp_id', 'count'),
                 Absentees_Today=('Today Status', lambda x: (x == 'Absent').sum()),
-                Presents_Today=('Today Status', lambda x: (x == 'Present').sum())
+                Presents_Today=('Today Status', lambda x: (x == 'Present').sum()),
+                Absent_Days_MTD=('MTD Absent Days', 'sum')
             ).reset_index()
             
             dept_summary['Total_Employees'] = pd.to_numeric(dept_summary['Total_Employees'], errors='coerce').fillna(0)
@@ -186,13 +200,14 @@ def render_dashboard(role, dept):
             dept_summary['Absence Rate %'] = np.where(dept_summary['Total_Employees'] > 0, (dept_summary['Absentees_Today'] / dept_summary['Total_Employees']) * 100, 0).round(1)
             
             dept_summary = dept_summary.sort_values(by=['Absentees_Today', 'Absence Rate %'], ascending=False)
-            st.dataframe(dept_summary.rename(columns={'department': 'Department', 'Total_Employees': 'Total Staff', 'Absentees_Today': 'Absent Today', 'Presents_Today': 'Present Today'}), use_container_width=True)
+            st.dataframe(dept_summary.rename(columns={'department': 'Department', 'Total_Employees': 'Total Staff', 'Absentees_Today': 'Absent Today', 'Presents_Today': 'Present Today', 'Absent_Days_MTD': 'Total Absent Days (MTD)'}), use_container_width=True)
 
         with d_tab2:
             shift_summary = df_dash_emp.groupby('shift').agg(
                 Total_Employees=('emp_id', 'count'),
                 Absentees_Today=('Today Status', lambda x: (x == 'Absent').sum()),
-                Presents_Today=('Today Status', lambda x: (x == 'Present').sum())
+                Presents_Today=('Today Status', lambda x: (x == 'Present').sum()),
+                Absent_Days_MTD=('MTD Absent Days', 'sum')
             ).reset_index()
             
             shift_summary['Total_Employees'] = pd.to_numeric(shift_summary['Total_Employees'], errors='coerce').fillna(0)
@@ -200,12 +215,22 @@ def render_dashboard(role, dept):
             shift_summary['Absence Rate %'] = np.where(shift_summary['Total_Employees'] > 0, (shift_summary['Absentees_Today'] / shift_summary['Total_Employees']) * 100, 0).round(1)
             
             shift_summary = shift_summary.sort_values(by=['Absentees_Today', 'Absence Rate %'], ascending=False)
-            st.dataframe(shift_summary.rename(columns={'shift': 'Shift Name', 'Total_Employees': 'Total Staff', 'Absentees_Today': 'Absent Today', 'Presents_Today': 'Present Today'}), use_container_width=True)
+            st.dataframe(shift_summary.rename(columns={'shift': 'Shift Name', 'Total_Employees': 'Total Staff', 'Absentees_Today': 'Absent Today', 'Presents_Today': 'Present Today', 'Absent_Days_MTD': 'Total Absent Days (MTD)'}), use_container_width=True)
 
         with d_tab3:
-            absent_emp_df = df_dash_emp[df_dash_emp['Today Status'] == 'Absent'][['emp_id', 'name', 'department', 'shift', 'mobile']]
+            st.markdown("#### 📅 Month-to-Date (MTD) Absence Leaderboard")
+            ind_summary = df_dash_emp[['emp_id', 'name', 'department', 'shift', 'Today Status', 'MTD Absent Days']].copy()
+            ind_summary = ind_summary.sort_values(by=['MTD Absent Days', 'name'], ascending=[False, True])
+            
+            st.dataframe(ind_summary.rename(columns={
+                'emp_id': 'ID', 'name': 'Name', 'department': 'Dept', 'shift': 'Shift', 'MTD Absent Days': 'Absent Days (MTD)'
+            }), use_container_width=True)
+
+            st.write("---")
+            st.markdown("#### 🚨 Today's Absent Employee Roster")
+            absent_emp_df = df_dash_emp[df_dash_emp['Today Status'] == 'Absent'][['emp_id', 'name', 'department', 'shift', 'mobile', 'MTD Absent Days']]
             if not absent_emp_df.empty:
-                st.dataframe(absent_emp_df.rename(columns={'emp_id': 'ID', 'name': 'Name', 'department': 'Dept', 'shift': 'Shift', 'mobile': 'Phone'}), use_container_width=True)
+                st.dataframe(absent_emp_df.rename(columns={'emp_id': 'ID', 'name': 'Name', 'department': 'Dept', 'shift': 'Shift', 'mobile': 'Phone', 'MTD Absent Days': 'Absent Days (MTD)'}), use_container_width=True)
             else:
                 st.success("🎉 Perfect Attendance Today! No absentees recorded.")
     else:
@@ -471,7 +496,9 @@ elif st.session_state.hr_logged_in:
         # --- EMPLOYEE DIRECTORY & SHIFT MAPPING ---
         elif hr_action == "👥 Directory":
             st.markdown("### 👥 Lifecycle & Shift Mapping")
-            dir_tab1, dir_tab2, dir_tab3, dir_tab4, dir_tab5 = st.tabs(["📋 Roster", "🪪 Download ID Cards", "🕒 Shift Mapping", "🔄 Status", "🚪 Early Leave Approval"])
+            
+            # REMOVED ROSTER TAB COMPLETELY
+            dir_tab1, dir_tab2, dir_tab3, dir_tab4 = st.tabs(["🪪 Download ID Cards", "🕒 Shift Mapping", "🔄 Status", "🚪 Early Leave Approval"])
             
             df_emp_main = get_all_employees()
             if st.session_state.user_role == "Dept Admin" and not df_emp_main.empty:
@@ -479,20 +506,8 @@ elif st.session_state.hr_logged_in:
                 
             df_shifts = get_shift_data()
             dynamic_shifts = df_shifts["shift_name"].tolist() if not df_shifts.empty else ["General"]
-            
-            with dir_tab1:
-                status_filter = st.radio("Filter By Status:", ["Active", "Left", "All"], horizontal=True)
-                st.write("---") 
-                if not df_emp_main.empty:
-                    df_filtered = df_emp_main if status_filter == "All" else df_emp_main[df_emp_main["status"] == status_filter]
-                    if not df_filtered.empty:
-                        st.dataframe(df_filtered[["emp_id", "name", "department", "shift", "mobile", "status"]].rename(columns={"emp_id": "ID", "name": "Name", "department": "Dept", "shift": "Shift", "mobile": "Phone"}), use_container_width=True) 
-                    else: 
-                        st.info("No employees found.")
-                else: 
-                    st.info("No employees found in your scope.")
                 
-            with dir_tab2:
+            with dir_tab1:
                 if not df_emp_main.empty:
                     active_emps = df_emp_main[df_emp_main["status"] == "Active"]
                     emp_dict = {f"{r['name']} (ID: {r['emp_id']})": r for _, r in active_emps.iterrows()}
@@ -506,7 +521,7 @@ elif st.session_state.hr_logged_in:
                         st.image(id_img, width=300)
                         st.download_button(label=f"📥 Download ID", data=buf.getvalue(), file_name=f"ID_{ed['emp_id']}.png", mime="image/png")
                         
-            with dir_tab3:
+            with dir_tab2:
                 s_col1, s_col2 = st.columns(2)
                 with s_col1:
                     with st.form("single_shift_form"):
@@ -530,7 +545,7 @@ elif st.session_state.hr_logged_in:
                                 except: pass
                         st.success(f"Updated shifts successfully!")
 
-            with dir_tab4:
+            with dir_tab3:
                 with st.form("status_update_form"):
                     c1, c2, c3 = st.columns(3)
                     with c1: update_id = st.text_input("Enter Employee ID")
@@ -542,7 +557,7 @@ elif st.session_state.hr_logged_in:
                             st.success(f"✅ Employee updated!")
                         else: st.error("❌ You cannot modify this employee ID.")
 
-            with dir_tab5:
+            with dir_tab4:
                 st.markdown("#### 🚪 Individual Early Leave Approval / Permission")
                 if not df_emp_main.empty:
                     emp_el_dict = {f"{r['name']} (ID: {r['emp_id']})": str(r['emp_id']) for _, r in df_emp_main.iterrows()}
