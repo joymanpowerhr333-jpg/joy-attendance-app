@@ -2,6 +2,7 @@ import streamlit as st
 from supabase import create_client, Client
 import qrcode
 import pandas as pd
+import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 from datetime import datetime, timezone, timedelta
 import base64
@@ -93,7 +94,7 @@ def generate_id_card(emp_id, name, department, mobile):
     draw.text((20, height + 110), f"Phone: {mobile}", fill="#666666", font=font_small)
     return id_card
 
-# --- DASHBOARD WITH DESCENDING ABSENTEEISM & TARDINESS ANALYSIS ---
+# --- DASHBOARD (NO LAYOUT CHANGES AS REQUESTED) ---
 def render_dashboard(role, dept):
     st.markdown("### 📈 Real-Time Attendance Analytics")
     df_emp = get_all_employees()
@@ -156,39 +157,46 @@ def render_dashboard(role, dept):
     with m4: st.metric("Month Avg Present", f"{avg_mtd_nos} ({avg_mtd_pct}%)")
 
     st.write("---")
-    st.markdown("### 🚨 Absenteeism & Tardiness Leaderboard (Descending Order)")
+    st.markdown("### 🚨 Absenteeism & Tardiness Leaderboard")
     st.caption("Identifies departments, shifts, and employees with the highest absence, late arrival, and early leave practices.")
 
     today_present_ids = df_att_dash[df_att_dash['date_only'] == today_str]['emp_id'].unique() if not df_att_dash.empty else []
     df_dash_emp['Today Status'] = df_dash_emp['emp_id'].apply(lambda x: 'Present' if x in today_present_ids else 'Absent')
 
-    d_tab1, d_tab2, d_tab3 = st.tabs(["🏢 Department-Wise Breakdown", "🕒 Shift-Wise Breakdown", "👤 Individual Employee Ranks"])
+    d_tab1, d_tab2, d_tab3 = st.tabs(["🏢 Department-Wise", "🕒 Shift-Wise", "👤 Individual Ranks"])
 
     with d_tab1:
+        # BUG FIX: Safe Data Type conversion for Pandas Division
         dept_summary = df_dash_emp.groupby('department').agg(
             Total_Employees=('emp_id', 'count'),
             Absentees_Today=('Today Status', lambda x: (x == 'Absent').sum()),
             Presents_Today=('Today Status', lambda x: (x == 'Present').sum())
         ).reset_index()
-        dept_summary['Absence Rate %'] = ((dept_summary['Absentees_Today'] / dept_summary['Total_Employees']) * 100).round(1)
+        
+        dept_summary['Total_Employees'] = pd.to_numeric(dept_summary['Total_Employees'], errors='coerce').fillna(0)
+        dept_summary['Absentees_Today'] = pd.to_numeric(dept_summary['Absentees_Today'], errors='coerce').fillna(0)
+        dept_summary['Absence Rate %'] = np.where(dept_summary['Total_Employees'] > 0, (dept_summary['Absentees_Today'] / dept_summary['Total_Employees']) * 100, 0).round(1)
+        
         dept_summary = dept_summary.sort_values(by=['Absentees_Today', 'Absence Rate %'], ascending=False)
-        st.markdown("#### Department Absence Ranking (Highest Absentees First)")
         st.dataframe(dept_summary.rename(columns={'department': 'Department', 'Total_Employees': 'Total Staff', 'Absentees_Today': 'Absent Today', 'Presents_Today': 'Present Today'}), use_container_width=True)
 
     with d_tab2:
+        # BUG FIX: Safe Data Type conversion for Pandas Division
         shift_summary = df_dash_emp.groupby('shift').agg(
             Total_Employees=('emp_id', 'count'),
             Absentees_Today=('Today Status', lambda x: (x == 'Absent').sum()),
             Presents_Today=('Today Status', lambda x: (x == 'Present').sum())
         ).reset_index()
-        shift_summary['Absence Rate %'] = ((shift_summary['Absentees_Today'] / shift_summary['Total_Employees']) * 100).round(1)
+        
+        shift_summary['Total_Employees'] = pd.to_numeric(shift_summary['Total_Employees'], errors='coerce').fillna(0)
+        shift_summary['Absentees_Today'] = pd.to_numeric(shift_summary['Absentees_Today'], errors='coerce').fillna(0)
+        shift_summary['Absence Rate %'] = np.where(shift_summary['Total_Employees'] > 0, (shift_summary['Absentees_Today'] / shift_summary['Total_Employees']) * 100, 0).round(1)
+        
         shift_summary = shift_summary.sort_values(by=['Absentees_Today', 'Absence Rate %'], ascending=False)
-        st.markdown("#### Shift Absence Ranking (Highest Absentees First)")
         st.dataframe(shift_summary.rename(columns={'shift': 'Shift Name', 'Total_Employees': 'Total Staff', 'Absentees_Today': 'Absent Today', 'Presents_Today': 'Present Today'}), use_container_width=True)
 
     with d_tab3:
         absent_emp_df = df_dash_emp[df_dash_emp['Today Status'] == 'Absent'][['emp_id', 'name', 'department', 'shift', 'mobile']]
-        st.markdown(f"#### Today's Absent Employee Roster ({len(absent_emp_df)} Total)")
         if not absent_emp_df.empty:
             st.dataframe(absent_emp_df.rename(columns={'emp_id': 'ID', 'name': 'Name', 'department': 'Dept', 'shift': 'Shift', 'mobile': 'Phone'}), use_container_width=True)
         else:
@@ -196,7 +204,6 @@ def render_dashboard(role, dept):
 
 def render_access_control():
     st.markdown("### 🔐 Provision Department Access")
-    st.info("Create login credentials for Department Heads to manage their own shifts and view analytics.")
     with st.form("new_access_form", clear_on_submit=True):
         col1, col2 = st.columns(2)
         with col1:
@@ -209,20 +216,12 @@ def render_access_control():
             if new_user and new_pass and new_dept:
                 try:
                     supabase.table("hr_users").insert({"username": new_user, "password": new_pass, "role": new_role, "department": new_dept}).execute()
-                    st.success(f"🎉 Account provisioned successfully for {new_user} ({new_role} - {new_dept})")
-                except: st.error("Error creating account. Ensure username is globally unique.")
+                    st.success(f"🎉 Account provisioned successfully for {new_user}")
+                except: st.error("Error creating account.")
 
 def render_shift_master_ui():
     st.markdown("### ⚙️ Shift Master Management")
     df_shifts = get_shift_data()
-    
-    if not df_shifts.empty:
-        st.dataframe(df_shifts[["shift_name", "start_time", "duration_hrs", "break_mins"]].rename(
-            columns={"shift_name": "Shift Name", "start_time": "Start Time", "duration_hrs": "Working Hrs", "break_mins": "Break (Mins)"}
-        ), use_container_width=True)
-        current_shifts = df_shifts["shift_name"].tolist()
-    else: current_shifts = []
-
     ALLOWED_TIMES = [f"{str(h).zfill(2)}:{m}" for h in range(24) for m in ["00", "30"]]
     
     tab1, tab_bulk, tab2, tab3 = st.tabs(["➕ Add Shift", "📤 Bulk Upload", "✏️ Edit Shift", "❌ Delete Shift"])
@@ -236,7 +235,6 @@ def render_shift_master_ui():
             with col2:
                 duration = st.number_input("Working Hours", min_value=1.0, max_value=24.0, value=8.0, step=0.5)
                 break_time = st.selectbox("Break Duration", [0, 30, 45, 60, 90, 120], format_func=lambda x: f"{x} Minutes")
-                
             if st.form_submit_button("Add Shift") and new_shift:
                 try:
                     supabase.table("shifts").insert({"shift_name": new_shift, "start_time": start_time, "duration_hrs": duration, "break_mins": break_time}).execute()
@@ -245,54 +243,63 @@ def render_shift_master_ui():
                 except: st.error("⚠️ Shift already exists or database error.")
                 
     with tab_bulk:
-        st.info("Upload a CSV file to add multiple shifts at once.")
-        sample_shift_csv = "shift_name,start_time,duration_hrs,break_mins\nMorning A,06:00,8,30\nNight B,18:30,12,60"
-        st.download_button("📥 Download Shift Template", data=sample_shift_csv, file_name="bulk_shifts_template.csv", mime="text/csv")
+        st.markdown("**1. Download Template & Prepare Data**")
+        st.download_button("📥 Download Shift Template", data="shift_name,start_time,duration_hrs,break_mins\nMorning A,06:00,8,30\nNight B,18:30,12,60", file_name="bulk_shifts_template.csv", mime="text/csv")
+        st.markdown("**2. Upload File**")
         shift_upload_file = st.file_uploader("Upload Shifts CSV", type=["csv"], key="bulk_shift_uploader")
+        
+        st.write("---") # TOP-TO-BOTTOM LAYOUT FIX
         if shift_upload_file and st.button("Process Bulk Shifts"):
             try:
                 df_shf_up = pd.read_csv(shift_upload_file)
-                success_count = 0
                 for _, row in df_shf_up.iterrows():
-                    try:
-                        supabase.table("shifts").insert({"shift_name": str(row['shift_name']), "start_time": str(row['start_time']).zfill(5), "duration_hrs": float(row['duration_hrs']), "break_mins": int(row['break_mins'])}).execute()
-                        success_count += 1
+                    try: supabase.table("shifts").insert({"shift_name": str(row['shift_name']), "start_time": str(row['start_time']).zfill(5), "duration_hrs": float(row['duration_hrs']), "break_mins": int(row['break_mins'])}).execute()
                     except: pass 
-                st.success(f"✅ Successfully added {success_count} shifts!")
+                st.success("✅ Successfully added shifts!")
                 st.rerun()
             except: st.error("Error reading CSV.")
 
     with tab2:
-        with st.form("edit_shift_form"):
-            old_shift = st.selectbox("Select Shift to Edit", current_shifts)
-            col1, col2 = st.columns(2)
-            with col1:
-                edited_shift = st.text_input("Enter New Name (Leave blank to keep same)")
-                new_start = st.selectbox("New Start Time", ALLOWED_TIMES, index=17)
-            with col2:
-                new_dur = st.number_input("New Working Hours", min_value=1.0, max_value=24.0, value=8.0, step=0.5)
-                new_brk = st.selectbox("New Break Duration", [0, 30, 45, 60, 90, 120])
-                
-            if st.form_submit_button("Update Shift"):
-                final_name = edited_shift if edited_shift else old_shift
-                try:
-                    supabase.table("shifts").update({"shift_name": final_name, "start_time": new_start, "duration_hrs": new_dur, "break_mins": new_brk}).eq("shift_name", old_shift).execute()
-                    if edited_shift: supabase.table("employees").update({"shift": final_name}).eq("shift", old_shift).execute()
-                    st.success(f"✅ Shift updated successfully!")
-                    st.rerun()
-                except: st.error("⚠️ Error updating shift.")
+        if not df_shifts.empty:
+            current_shifts = df_shifts["shift_name"].tolist()
+            with st.form("edit_shift_form"):
+                old_shift = st.selectbox("Select Shift to Edit", current_shifts)
+                col1, col2 = st.columns(2)
+                with col1:
+                    edited_shift = st.text_input("Enter New Name (Leave blank to keep same)")
+                    new_start = st.selectbox("New Start Time", ALLOWED_TIMES, index=17)
+                with col2:
+                    new_dur = st.number_input("New Working Hours", min_value=1.0, max_value=24.0, value=8.0, step=0.5)
+                    new_brk = st.selectbox("New Break Duration", [0, 30, 45, 60, 90, 120])
+                if st.form_submit_button("Update Shift"):
+                    final_name = edited_shift if edited_shift else old_shift
+                    try:
+                        supabase.table("shifts").update({"shift_name": final_name, "start_time": new_start, "duration_hrs": new_dur, "break_mins": new_brk}).eq("shift_name", old_shift).execute()
+                        if edited_shift: supabase.table("employees").update({"shift": final_name}).eq("shift", old_shift).execute()
+                        st.success(f"✅ Shift updated successfully!")
+                        st.rerun()
+                    except: st.error("⚠️ Error updating shift.")
 
     with tab3:
-        with st.form("delete_shift_form"):
-            del_shift = st.selectbox("Select Shift to Remove", current_shifts)
-            if st.form_submit_button("Delete Shift"):
-                try:
-                    supabase.table("shifts").delete().eq("shift_name", del_shift).execute()
-                    st.success(f"✅ Deleted {del_shift}!")
-                    st.rerun()
-                except: st.error("⚠️ Error deleting shift.")
+        if not df_shifts.empty:
+            current_shifts = df_shifts["shift_name"].tolist()
+            with st.form("delete_shift_form"):
+                del_shift = st.selectbox("Select Shift to Remove", current_shifts)
+                if st.form_submit_button("Delete Shift"):
+                    try:
+                        supabase.table("shifts").delete().eq("shift_name", del_shift).execute()
+                        st.success(f"✅ Deleted {del_shift}!")
+                        st.rerun()
+                    except: st.error("⚠️ Error deleting shift.")
+                    
+    st.write("---") # TOP-TO-BOTTOM LAYOUT FIX
+    st.markdown("#### Current Active Shifts Database")
+    if not df_shifts.empty:
+        st.dataframe(df_shifts[["shift_name", "start_time", "duration_hrs", "break_mins"]].rename(
+            columns={"shift_name": "Shift Name", "start_time": "Start Time", "duration_hrs": "Working Hrs", "break_mins": "Break (Mins)"}), use_container_width=True)
 
-# --- SESSION STATE ---
+
+# --- SESSION STATE INITIALIZATION ---
 if "hr_logged_in" not in st.session_state: st.session_state.hr_logged_in = False
 if "hr_username" not in st.session_state: st.session_state.hr_username = ""
 if "user_role" not in st.session_state: st.session_state.user_role = ""
@@ -330,11 +337,8 @@ if not st.session_state.hr_logged_in and not st.session_state.super_logged_in:
                         user_data = hr_check.data[0]
                         st.session_state.hr_logged_in = True
                         st.session_state.hr_username = hr_user_input
-                        
-                        # FIX FOR LEGACY ACCOUNTS: If role is NULL, defaults to 'HR'
                         st.session_state.user_role = user_data.get("role") or "HR"
                         st.session_state.user_dept = user_data.get("department") or "All"
-                        
                         st.rerun() 
                     else: st.error("❌ Invalid Username or Password.")
                         
@@ -367,7 +371,6 @@ elif st.session_state.hr_logged_in:
             
         st.write("---")
         
-        # --- DYNAMIC MENU ---
         menu_options = ["📈 Dashboard", "⏱️ Record Attendance", "📊 Payroll & Logs", "👥 Directory"]
         if st.session_state.user_role == "HR":
             menu_options.insert(3, "👤 Enroll Employees")
@@ -379,10 +382,8 @@ elif st.session_state.hr_logged_in:
         if hr_action == "📈 Dashboard":
             render_dashboard(st.session_state.user_role, st.session_state.user_dept)
         
-        # --- RECORD ATTENDANCE ---
         elif hr_action == "⏱️ Record Attendance":
             st.markdown("### ⏱️ Daily Attendance Capture")
-            
             tab1, tab2 = st.tabs(["📸 Live QR Scanner", "⌨️ Manual Entry"])
             with tab1:
                 if st.session_state.last_scanned_id:
@@ -396,9 +397,8 @@ elif st.session_state.hr_logged_in:
                         st.rerun()
                 else:
                     punch_action = st.radio("Select Action to Enable Scanner:", ["Punch In", "Punch Out", "Break Start", "Break End"], horizontal=True, index=None)
-                    
-                    if punch_action is None:
-                        st.warning("⚠️ Please select an action above (e.g., 'Punch In') to activate the camera.")
+                    st.write("---") # TOP-TO-BOTTOM LAYOUT FIX
+                    if punch_action is None: st.warning("⚠️ Please select an action above to activate the camera.")
                     else:
                         st.info(f"🟢 **Scanner Enabled for: {punch_action}**. Point camera at QR code.")
                         qr_code = qrcode_scanner(key=f"qr_cam_{st.session_state.camera_key}")
@@ -416,12 +416,10 @@ elif st.session_state.hr_logged_in:
                         supabase.table("attendance").insert({"emp_id": str(manual_id), "method": "Manual Entry", "punch_type": manual_action}).execute()
                         st.success(f"✅ **{manual_action}** successfully recorded for ID: **{manual_id}**")
                         
-        # --- ENROLL EMPLOYEES (ONLY VISIBLE TO HR) ---
         elif hr_action == "👤 Enroll Employees":
             st.markdown("### 👤 Employee Enrollment")
             df_shifts = get_shift_data()
             dynamic_shifts = df_shifts["shift_name"].tolist() if not df_shifts.empty else ["General"]
-            
             e_tab1, e_tab2 = st.tabs(["Single Enrollment", "Bulk Upload (CSV)"])
             with e_tab1:
                 with st.form("enrollment_form", clear_on_submit=True):
@@ -430,9 +428,7 @@ elif st.session_state.hr_logged_in:
                         emp_id, name = st.text_input("Employee ID Number*"), st.text_input("Full Name*")
                     with c2:
                         dept_val = st.session_state.user_dept if st.session_state.user_role == "Dept Admin" else st.text_input("Department")
-                        if st.session_state.user_role == "Dept Admin": st.info(f"Department locked to: {dept_val}")
                         mobile, shift = st.text_input("Mobile Number"), st.selectbox("Assigned Shift", dynamic_shifts)
-                    
                     if st.form_submit_button("✨ Generate Profile & ID Card") and emp_id and name:
                         try:
                             supabase.table("employees").insert({"emp_id": str(emp_id), "name": name, "department": dept_val, "mobile": mobile, "shift": shift, "status": "Active", "status_updated_on": datetime.now(IST).strftime('%d-%m-%Y')}).execute()
@@ -443,9 +439,11 @@ elif st.session_state.hr_logged_in:
                         except: st.error("⚠️ Error saving. ID might already exist.")
                         
             with e_tab2:
-                st.info("Upload a CSV file to enroll multiple employees at once.")
+                st.markdown("**1. Download Template & Prepare Data**")
                 st.download_button("📥 Download Sample Template", data="emp_id,name,department,mobile,shift\n1001,John Doe,Sales,9876543210,General", file_name="bulk_enroll.csv", mime="text/csv")
+                st.markdown("**2. Upload File**")
                 uploaded_file = st.file_uploader("Upload Completed CSV", type=["csv"])
+                st.write("---") # TOP-TO-BOTTOM LAYOUT FIX
                 if uploaded_file and st.button("Process Bulk Enrollment"):
                     try:
                         df_upload = pd.read_csv(uploaded_file)
@@ -456,7 +454,6 @@ elif st.session_state.hr_logged_in:
                         st.success("✅ Successfully enrolled employees!")
                     except: st.error("Error reading CSV.")
 
-        # --- EMPLOYEE DIRECTORY & SHIFT MAPPING ---
         elif hr_action == "👥 Directory":
             st.markdown("### 👥 Lifecycle & Shift Mapping")
             dir_tab1, dir_tab2, dir_tab3, dir_tab4, dir_tab5 = st.tabs(["📋 Roster", "🪪 Download ID Cards", "🕒 Shift Mapping", "🔄 Status", "🚪 Early Leave Approval"])
@@ -469,8 +466,9 @@ elif st.session_state.hr_logged_in:
             dynamic_shifts = df_shifts["shift_name"].tolist() if not df_shifts.empty else ["General"]
             
             with dir_tab1:
+                status_filter = st.radio("Filter By Status:", ["Active", "Left", "All"], horizontal=True)
+                st.write("---") # TOP-TO-BOTTOM LAYOUT FIX
                 if not df_emp_main.empty:
-                    status_filter = st.radio("Filter By:", ["Active", "Left", "All"], horizontal=True)
                     df_filtered = df_emp_main if status_filter == "All" else df_emp_main[df_emp_main["status"] == status_filter]
                     st.dataframe(df_filtered[["emp_id", "name", "department", "shift", "mobile", "status"]].rename(columns={"emp_id": "ID", "name": "Name", "department": "Dept", "shift": "Shift", "mobile": "Phone"}), use_container_width=True) if not df_filtered.empty else st.info("No employees found.")
                 else: st.info("No employees found in your scope.")
@@ -480,6 +478,7 @@ elif st.session_state.hr_logged_in:
                     active_emps = df_emp_main[df_emp_main["status"] == "Active"]
                     emp_dict = {f"{r['name']} (ID: {r['emp_id']})": r for _, r in active_emps.iterrows()}
                     selected_emp = st.selectbox("Select Employee for ID Card", list(emp_dict.keys()))
+                    st.write("---") # TOP-TO-BOTTOM LAYOUT FIX
                     if selected_emp:
                         ed = emp_dict[selected_emp]
                         id_img = generate_id_card(ed['emp_id'], ed['name'], ed.get('department',''), ed.get('mobile',''))
@@ -492,6 +491,7 @@ elif st.session_state.hr_logged_in:
                 s_col1, s_col2 = st.columns(2)
                 with s_col1:
                     with st.form("single_shift_form"):
+                        st.markdown("**Individual Update**")
                         if not df_emp_main.empty:
                             emp_map_dict = {f"{r['name']} (ID: {r['emp_id']})": r['emp_id'] for _, r in df_emp_main.iterrows()}
                             map_sel = st.selectbox("Select Employee", list(emp_map_dict.keys()))
@@ -500,6 +500,7 @@ elif st.session_state.hr_logged_in:
                                 supabase.table("employees").update({"shift": new_shift}).eq("emp_id", str(emp_map_dict[map_sel])).execute()
                                 st.success(f"Shift updated!")
                 with s_col2:
+                    st.markdown("**Bulk Update**")
                     st.download_button("📥 Mapping Template", data="emp_id,shift\n1001,1st shift", file_name="shift_map.csv", mime="text/csv")
                     shift_file = st.file_uploader("Upload Shift CSV", type=["csv"])
                     if shift_file and st.button("Update Bulk Shifts"):
@@ -524,7 +525,6 @@ elif st.session_state.hr_logged_in:
 
             with dir_tab5:
                 st.markdown("#### 🚪 Individual Early Leave Approval / Permission")
-                st.info("Approve Early Exit requests to prevent system penalty calculations for valid permissions.")
                 if not df_emp_main.empty:
                     emp_el_dict = {f"{r['name']} (ID: {r['emp_id']})": str(r['emp_id']) for _, r in df_emp_main.iterrows()}
                     with st.form("early_leave_form", clear_on_submit=True):
@@ -546,7 +546,6 @@ elif st.session_state.hr_logged_in:
                                 st.success(f"✅ Permission log created for Employee {target_id} on {target_date_str}!")
                 else: st.info("No employees available for early leave updates.")
 
-        # --- VIEW PAYROLL & LOGS ---
         elif hr_action == "📊 Payroll & Logs":
             st.markdown("### 📊 Automated Payroll & Attendance Logs")
             p_tab1, p_tab2 = st.tabs(["🧮 Payroll & Penalty Summary", "📜 Raw Punch Logs"])
@@ -559,10 +558,9 @@ elif st.session_state.hr_logged_in:
                 df_emp_all = df_emp_all[df_emp_all['department'] == st.session_state.user_dept]
                 
             valid_scope_ids = df_emp_all['emp_id'].astype(str).tolist() if not df_emp_all.empty else []
-            if not df_att_all.empty and valid_scope_ids:
-                df_att_all = df_att_all[df_att_all['emp_id'].astype(str).isin(valid_scope_ids)]
+            if not df_att_all.empty and valid_scope_ids: df_att_all = df_att_all[df_att_all['emp_id'].astype(str).isin(valid_scope_ids)]
 
-            report_type = st.radio("Choose Report Type", ["Daily Report", "Monthly Report", "Custom Date Range"], horizontal=True)
+            report_type = st.radio("Choose Report Scope:", ["Daily Report", "Monthly Report", "Custom Date Range"], horizontal=True)
             today = datetime.now(IST).date()
             
             if report_type == "Daily Report":
@@ -578,94 +576,93 @@ elif st.session_state.hr_logged_in:
                 date_range = st.date_input("Select Start and End Date", [today, today])
                 report_name = f"Custom_Range" if len(date_range) != 2 else f"Custom_{date_range[0]}_to_{date_range[1]}"
 
+            st.write("---") # TOP-TO-BOTTOM LAYOUT FIX
+            
             with p_tab1:
-                if not df_att_all.empty and not df_emp_all.empty and not df_shf_all.empty:
-                    df_att_sorted = df_att_all.sort_values(by=["emp_id", "time_logged"]).copy()
-                    
-                    records = []
-                    for emp_id, grp in df_att_sorted.groupby("emp_id"):
-                        current_in = None
-                        for _, row in grp.iterrows():
-                            p_type = row.get("punch_type", "")
-                            if p_type == "Punch In":
-                                if current_in is not None:
-                                    records.append({"emp_id": str(emp_id), "Punch In": current_in["time_logged"], "Punch Out": pd.NaT, "early_leave_approved": current_in.get("early_leave_approved", False), "remarks": current_in.get("remarks", "")})
-                                current_in = row
-                            elif p_type == "Punch Out" and current_in is not None:
-                                records.append({"emp_id": str(emp_id), "Punch In": current_in["time_logged"], "Punch Out": row["time_logged"], "early_leave_approved": row.get("early_leave_approved", False) or current_in.get("early_leave_approved", False), "remarks": f"{current_in.get('remarks', '')} {row.get('remarks', '')}".strip()})
-                                current_in = None
-                        if current_in is not None:
-                            records.append({"emp_id": str(emp_id), "Punch In": current_in["time_logged"], "Punch Out": pd.NaT, "early_leave_approved": current_in.get("early_leave_approved", False), "remarks": current_in.get("remarks", "")})
-                    
-                    df_pairs = pd.DataFrame(records)
-                    
-                    if not df_pairs.empty:
-                        df_pairs['Punch In'] = pd.to_datetime(df_pairs['Punch In']).dt.tz_convert('Asia/Kolkata')
-                        df_pairs['Punch Out'] = pd.to_datetime(df_pairs['Punch Out']).dt.tz_convert('Asia/Kolkata')
-                        df_pairs['Shift Date'] = df_pairs['Punch In'].dt.date
+                if st.button("Generate Payroll Report"):
+                    if not df_att_all.empty and not df_emp_all.empty and not df_shf_all.empty:
+                        df_att_sorted = df_att_all.sort_values(by=["emp_id", "time_logged"]).copy()
                         
-                        if report_type == "Daily Report": df_pairs = df_pairs[df_pairs["Shift Date"] == search_date]
-                        elif report_type == "Monthly Report": df_pairs = df_pairs[(df_pairs['Punch In'].dt.month == month_num) & (df_pairs['Punch In'].dt.year == selected_year)]
-                        elif report_type == "Custom Date Range" and len(date_range) == 2: df_pairs = df_pairs[(df_pairs["Shift Date"] >= date_range[0]) & (df_pairs["Shift Date"] <= date_range[1])]
+                        records = []
+                        for emp_id, grp in df_att_sorted.groupby("emp_id"):
+                            current_in = None
+                            for _, row in grp.iterrows():
+                                p_type = row.get("punch_type", "")
+                                if p_type == "Punch In":
+                                    if current_in is not None:
+                                        records.append({"emp_id": str(emp_id), "Punch In": current_in["time_logged"], "Punch Out": pd.NaT, "early_leave_approved": current_in.get("early_leave_approved", False), "remarks": current_in.get("remarks", "")})
+                                    current_in = row
+                                elif p_type == "Punch Out" and current_in is not None:
+                                    records.append({"emp_id": str(emp_id), "Punch In": current_in["time_logged"], "Punch Out": row["time_logged"], "early_leave_approved": row.get("early_leave_approved", False) or current_in.get("early_leave_approved", False), "remarks": f"{current_in.get('remarks', '')} {row.get('remarks', '')}".strip()})
+                                    current_in = None
+                            if current_in is not None:
+                                records.append({"emp_id": str(emp_id), "Punch In": current_in["time_logged"], "Punch Out": pd.NaT, "early_leave_approved": current_in.get("early_leave_approved", False), "remarks": current_in.get("remarks", "")})
+                        
+                        df_pairs = pd.DataFrame(records)
                         
                         if not df_pairs.empty:
-                            df_merged = pd.merge(df_pairs, df_emp_all, on="emp_id", how="left")
-                            df_merged = pd.merge(df_merged, df_shf_all.rename(columns={"shift_name": "shift"}), on="shift", how="left")
+                            df_pairs['Punch In'] = pd.to_datetime(df_pairs['Punch In']).dt.tz_convert('Asia/Kolkata')
+                            df_pairs['Punch Out'] = pd.to_datetime(df_pairs['Punch Out']).dt.tz_convert('Asia/Kolkata')
+                            df_pairs['Shift Date'] = df_pairs['Punch In'].dt.date
                             
-                            df_merged['start_time'] = df_merged['start_time'].fillna('08:30')
-                            df_merged['duration_hrs'] = df_merged['duration_hrs'].fillna(8.0)
-                            df_merged['break_mins'] = df_merged['break_mins'].fillna(30)
+                            if report_type == "Daily Report": df_pairs = df_pairs[df_pairs["Shift Date"] == search_date]
+                            elif report_type == "Monthly Report": df_pairs = df_pairs[(df_pairs['Punch In'].dt.month == month_num) & (df_pairs['Punch In'].dt.year == selected_year)]
+                            elif report_type == "Custom Date Range" and len(date_range) == 2: df_pairs = df_pairs[(df_pairs["Shift Date"] >= date_range[0]) & (df_pairs["Shift Date"] <= date_range[1])]
                             
-                            df_merged['Start Limit'] = pd.to_datetime(df_merged['Shift Date'].astype(str) + ' ' + df_merged['start_time']).dt.tz_localize('Asia/Kolkata')
-                            df_merged['End Limit'] = df_merged['Start Limit'] + pd.to_timedelta(df_merged['duration_hrs'], unit='h') + pd.to_timedelta(df_merged['break_mins'], unit='m')
-                            
-                            df_merged['Is_Late'] = df_merged['Punch In'] > df_merged['Start Limit']
-                            df_merged['Raw_Early'] = df_merged['Punch Out'].notna() & (df_merged['Punch Out'] < df_merged['End Limit'])
-                            df_merged['Is_Early_Penalized'] = df_merged['Raw_Early'] & (~df_merged['early_leave_approved'])
-                            
-                            df_merged['Status'] = 'Present'
-                            df_merged.loc[df_merged['Is_Late'], 'Status'] = 'Half Day Absent (Late)'
-                            df_merged.loc[df_merged['Raw_Early'] & df_merged['early_leave_approved'], 'Status'] = 'Early Exit (Approved)'
-                            df_merged.loc[df_merged['Is_Early_Penalized'], 'Status'] = 'Early Exit (Penalized -1Hr)'
-                            df_merged.loc[df_merged['Punch Out'].isna(), 'Status'] = 'Missing Punch Out'
-                            
-                            df_merged['Worked Hrs'] = (df_merged['Punch Out'] - df_merged['Punch In']).dt.total_seconds() / 3600.0
-                            df_merged['Effective Hrs'] = df_merged['Worked Hrs']
-                            df_merged.loc[df_merged['Is_Early_Penalized'], 'Effective Hrs'] = df_merged['Effective Hrs'] - 1.0 
-                            
-                            df_merged['Req Hrs'] = df_merged['duration_hrs'] + (df_merged['break_mins'] / 60.0)
-                            df_merged['OT Hrs'] = (df_merged['Effective Hrs'] - df_merged['Req Hrs']).apply(lambda x: round(max(0, x), 2) if pd.notna(x) else 0)
-                            
-                            df_merged['Punch In Time'] = df_merged['Punch In'].dt.strftime('%I:%M %p')
-                            df_merged['Punch Out Time'] = df_merged['Punch Out'].dt.strftime('%I:%M %p').fillna('--')
-                            df_merged['Worked Hrs'] = df_merged['Worked Hrs'].round(2).fillna(0)
-                            
-                            cols = ["Shift Date", "emp_id", "name", "department", "shift", "Punch In Time", "Punch Out Time", "Status", "Worked Hrs", "OT Hrs", "remarks"]
-                            final_report = df_merged[[c for c in cols if c in df_merged.columns]].rename(columns={"emp_id": "ID", "name": "Name", "department": "Dept", "shift": "Shift", "remarks": "Remarks"})
-                            
-                            st.dataframe(final_report, use_container_width=True)
-                            csv = final_report.to_csv(index=False).encode('utf-8')
-                            st.download_button(f"📥 Export Payroll CSV", data=csv, file_name=f'Joy_Payroll_{report_name}.csv', mime='text/csv')
-                        else: st.info("No paired attendance records found for selected date scope.")
-                    else: st.info("No punch pairs generated.")
-                else: st.info("No attendance data recorded yet for your department scope.")
+                            if not df_pairs.empty:
+                                df_merged = pd.merge(df_pairs, df_emp_all, on="emp_id", how="left")
+                                df_merged = pd.merge(df_merged, df_shf_all.rename(columns={"shift_name": "shift"}), on="shift", how="left")
+                                
+                                df_merged['start_time'] = df_merged['start_time'].fillna('08:30')
+                                df_merged['duration_hrs'] = df_merged['duration_hrs'].fillna(8.0)
+                                df_merged['break_mins'] = df_merged['break_mins'].fillna(30)
+                                
+                                df_merged['Start Limit'] = pd.to_datetime(df_merged['Shift Date'].astype(str) + ' ' + df_merged['start_time']).dt.tz_localize('Asia/Kolkata')
+                                df_merged['End Limit'] = df_merged['Start Limit'] + pd.to_timedelta(df_merged['duration_hrs'], unit='h') + pd.to_timedelta(df_merged['break_mins'], unit='m')
+                                
+                                df_merged['Is_Late'] = df_merged['Punch In'] > df_merged['Start Limit']
+                                df_merged['Raw_Early'] = df_merged['Punch Out'].notna() & (df_merged['Punch Out'] < df_merged['End Limit'])
+                                df_merged['Is_Early_Penalized'] = df_merged['Raw_Early'] & (~df_merged['early_leave_approved'])
+                                
+                                df_merged['Status'] = 'Present'
+                                df_merged.loc[df_merged['Is_Late'], 'Status'] = 'Half Day Absent (Late)'
+                                df_merged.loc[df_merged['Raw_Early'] & df_merged['early_leave_approved'], 'Status'] = 'Early Exit (Approved)'
+                                df_merged.loc[df_merged['Is_Early_Penalized'], 'Status'] = 'Early Exit (Penalized -1Hr)'
+                                df_merged.loc[df_merged['Punch Out'].isna(), 'Status'] = 'Missing Punch Out'
+                                
+                                df_merged['Worked Hrs'] = (df_merged['Punch Out'] - df_merged['Punch In']).dt.total_seconds() / 3600.0
+                                df_merged['Effective Hrs'] = df_merged['Worked Hrs']
+                                df_merged.loc[df_merged['Is_Early_Penalized'], 'Effective Hrs'] = df_merged['Effective Hrs'] - 1.0 
+                                
+                                df_merged['Req Hrs'] = df_merged['duration_hrs'] + (df_merged['break_mins'] / 60.0)
+                                df_merged['OT Hrs'] = (df_merged['Effective Hrs'] - df_merged['Req Hrs']).apply(lambda x: round(max(0, x), 2) if pd.notna(x) else 0)
+                                
+                                df_merged['Punch In Time'] = df_merged['Punch In'].dt.strftime('%I:%M %p')
+                                df_merged['Punch Out Time'] = df_merged['Punch Out'].dt.strftime('%I:%M %p').fillna('--')
+                                df_merged['Worked Hrs'] = df_merged['Worked Hrs'].round(2).fillna(0)
+                                
+                                cols = ["Shift Date", "emp_id", "name", "department", "shift", "Punch In Time", "Punch Out Time", "Status", "Worked Hrs", "OT Hrs", "remarks"]
+                                final_report = df_merged[[c for c in cols if c in df_merged.columns]].rename(columns={"emp_id": "ID", "name": "Name", "department": "Dept", "shift": "Shift", "remarks": "Remarks"})
+                                
+                                st.dataframe(final_report, use_container_width=True)
+                                csv = final_report.to_csv(index=False).encode('utf-8')
+                                st.download_button(f"📥 Export Payroll CSV", data=csv, file_name=f'Joy_Payroll_{report_name}.csv', mime='text/csv')
+                            else: st.info("No paired attendance records found for selected date scope.")
+                        else: st.info("No punch pairs generated.")
+                    else: st.info("No attendance data recorded yet for your department scope.")
 
             with p_tab2:
-                st.markdown("#### Raw Punch Log Stream")
-                if not df_att_all.empty:
-                    df_raw_disp = df_att_all.copy()
-                    df_raw_disp['Punch Time'] = pd.to_datetime(df_raw_disp['time_logged']).dt.strftime('%d-%m-%Y %I:%M:%S %p')
-                    st.dataframe(df_raw_disp[['date_only', 'emp_id', 'punch_type', 'method', 'Punch Time', 'early_leave_approved', 'remarks']].rename(
-                        columns={'date_only': 'Date', 'emp_id': 'ID', 'punch_type': 'Action', 'method': 'Method', 'early_leave_approved': 'Approved Early Leave', 'remarks': 'Remarks'}
-                    ), use_container_width=True)
-                else: st.info("No raw punch logs available.")
+                if st.button("Generate Raw Log Stream"):
+                    if not df_att_all.empty:
+                        df_raw_disp = df_att_all.copy()
+                        df_raw_disp['Punch Time'] = pd.to_datetime(df_raw_disp['time_logged']).dt.strftime('%d-%m-%Y %I:%M:%S %p')
+                        st.dataframe(df_raw_disp[['date_only', 'emp_id', 'punch_type', 'method', 'Punch Time', 'early_leave_approved', 'remarks']].rename(
+                            columns={'date_only': 'Date', 'emp_id': 'ID', 'punch_type': 'Action', 'method': 'Method', 'early_leave_approved': 'Approved Early Leave', 'remarks': 'Remarks'}
+                        ), use_container_width=True)
+                    else: st.info("No raw punch logs available.")
 
-        # --- HR EXCLUSIVES (MULTI-LINE BLOCKS TO PREVENT FORMATTING BUGS) ---
-        elif hr_action == "⚙️ Shift Master": 
-            render_shift_master_ui()
-            
-        elif hr_action == "🔐 Access Control": 
-            render_access_control()
+        elif hr_action == "⚙️ Shift Master": render_shift_master_ui()
+        elif hr_action == "🔐 Access Control": render_access_control()
 
 # ==========================================
 #         STATE 3: SUPER ADMIN DASHBOARD
