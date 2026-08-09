@@ -209,6 +209,7 @@ if "hr_logged_in" not in st.session_state: st.session_state.hr_logged_in = False
 if "hr_username" not in st.session_state: st.session_state.hr_username = ""
 if "super_logged_in" not in st.session_state: st.session_state.super_logged_in = False
 if "camera_key" not in st.session_state: st.session_state.camera_key = 1
+if "last_scanned_id" not in st.session_state: st.session_state.last_scanned_id = None
 if "success_msg" not in st.session_state: st.session_state.success_msg = ""
 if "error_msg" not in st.session_state: st.session_state.error_msg = ""
 
@@ -270,36 +271,46 @@ elif st.session_state.hr_logged_in:
         hr_action = st.radio("Select Module:", ["⏱️ Record Attendance", "📊 Payroll & Logs", "👤 Enroll Employees", "👥 Directory", "⚙️ Shift Master"], horizontal=True)
         st.write("<br>", unsafe_allow_html=True)
         
-        # --- 1. RECORD ATTENDANCE (LIVE SCANNER) ---
+        # --- 1. RECORD ATTENDANCE ---
         if hr_action == "⏱️ Record Attendance":
             st.markdown("### ⏱️ Daily Attendance Capture (In / Out)")
-            
-            if st.session_state.success_msg:
-                st.success(st.session_state.success_msg)
-                st.session_state.success_msg = ""
-            if st.session_state.error_msg:
-                st.warning(st.session_state.error_msg)
-                st.session_state.error_msg = ""
             
             tab1, tab2 = st.tabs(["📸 Live QR Scanner", "⌨️ Manual Entry"])
             
             with tab1:
                 st.info("Scanner alternates automatically (Scan 1 = In, Scan 2 = Out). Point your camera at the QR code.")
                 
-                # The live scanner component triggers immediately upon recognizing a QR code
-                qr_code = qrcode_scanner(key=f"qr_cam_{st.session_state.camera_key}")
-                
-                if qr_code:
-                    punch_type = check_punch_status(qr_code)
-                    if punch_type == "Limit Reached":
-                        st.session_state.error_msg = f"⚠️ Limit Reached: Employee ID {qr_code} has already Punched In and Out today!"
-                    else:
-                        supabase.table("attendance").insert({"emp_id": qr_code, "method": "QR Code", "punch_type": punch_type}).execute()
-                        st.session_state.success_msg = f"✅ {punch_type} successfully recorded for ID: **{qr_code}**"
+                # IF A SCAN JUST HAPPENED: Show the confirmation screen
+                if st.session_state.last_scanned_id:
+                    if st.session_state.success_msg:
+                        st.success(st.session_state.success_msg)
+                    if st.session_state.error_msg:
+                        st.error(st.session_state.error_msg)
                     
-                    # Advance the camera key to reset the scanner for the next person
-                    st.session_state.camera_key += 1
-                    st.rerun()
+                    st.write("---")
+                    if st.button("📸 Scan Next Employee", use_container_width=True):
+                        # Clear the state and reset the camera
+                        st.session_state.last_scanned_id = None
+                        st.session_state.success_msg = ""
+                        st.session_state.error_msg = ""
+                        st.session_state.camera_key += 1
+                        st.rerun()
+                
+                # IF NO SCAN YET: Show the active scanner
+                else:
+                    qr_code = qrcode_scanner(key=f"qr_cam_{st.session_state.camera_key}")
+                    
+                    if qr_code:
+                        punch_type = check_punch_status(qr_code)
+                        if punch_type == "Limit Reached":
+                            st.session_state.error_msg = f"⚠️ Limit Reached: Employee ID {qr_code} has already Punched In and Out today!"
+                        else:
+                            supabase.table("attendance").insert({"emp_id": qr_code, "method": "QR Code", "punch_type": punch_type}).execute()
+                            st.session_state.success_msg = f"✅ {punch_type} successfully recorded for ID: **{qr_code}**"
+                        
+                        # Lock in the scan to trigger the confirmation screen
+                        st.session_state.last_scanned_id = qr_code
+                        st.rerun()
             
             with tab2:
                 with st.form("manual_entry_form", clear_on_submit=True):
