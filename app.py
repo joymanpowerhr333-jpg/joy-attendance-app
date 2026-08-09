@@ -94,24 +94,30 @@ def generate_id_card(emp_id, name, department, mobile):
     draw.text((20, height + 110), f"Phone: {mobile}", fill="#666666", font=font_small)
     return id_card
 
-# --- DASHBOARD (NO LAYOUT CHANGES AS REQUESTED) ---
+# --- DASHBOARD ---
 def render_dashboard(role, dept):
     st.markdown("### 📈 Real-Time Attendance Analytics")
     df_emp = get_all_employees()
     df_att = get_all_attendance()
     df_shf = get_shift_data()
     
-    if df_emp.empty:
-        st.info("No employee data available to generate analytics.")
-        return
-
-    if role == "Dept Admin": 
+    if role == "Dept Admin" and not df_emp.empty: 
         df_emp = df_emp[df_emp['department'] == dept]
         
     col1, col2 = st.columns(2)
     with col1:
         if role in ["HR", "Super Admin"]:
-            dept_list = ["All"] + sorted(df_emp['department'].unique().tolist())
+            # FIX: Get departments from BOTH employees and hr_users table
+            dept_set = set()
+            if not df_emp.empty: dept_set.update(df_emp['department'].dropna().unique().tolist())
+            try:
+                hr_users = supabase.table("hr_users").select("department").execute()
+                if hr_users.data:
+                    for row in hr_users.data:
+                        if row.get("department") and row["department"] != "All": dept_set.add(row["department"])
+            except: pass
+            
+            dept_list = ["All"] + sorted(list(dept_set))
             dash_dept = st.selectbox("Filter by Department", dept_list)
         else:
             dash_dept = dept
@@ -122,13 +128,14 @@ def render_dashboard(role, dept):
         dash_shift = st.selectbox("Filter by Shift", shift_list)
         
     df_dash_emp = df_emp.copy()
-    if dash_dept != "All": df_dash_emp = df_dash_emp[df_dash_emp['department'] == dash_dept]
-    if dash_shift != "All": df_dash_emp = df_dash_emp[df_dash_emp['shift'] == dash_shift]
+    if not df_dash_emp.empty:
+        if dash_dept != "All": df_dash_emp = df_dash_emp[df_dash_emp['department'] == dash_dept]
+        if dash_shift != "All": df_dash_emp = df_dash_emp[df_dash_emp['shift'] == dash_shift]
         
-    active_emp_count = len(df_dash_emp[df_dash_emp['status'] == 'Active'])
-    valid_emp_ids = df_dash_emp['emp_id'].tolist()
+    active_emp_count = len(df_dash_emp[df_dash_emp['status'] == 'Active']) if not df_dash_emp.empty else 0
+    valid_emp_ids = df_dash_emp['emp_id'].tolist() if not df_dash_emp.empty else []
     
-    df_att_dash = df_att[df_att['emp_id'].isin(valid_emp_ids)].copy() if not df_att.empty else pd.DataFrame(columns=['emp_id', 'date_only', 'punch_type', 'time_logged'])
+    df_att_dash = df_att[df_att['emp_id'].isin(valid_emp_ids)].copy() if not df_att.empty and valid_emp_ids else pd.DataFrame(columns=['emp_id', 'date_only', 'punch_type', 'time_logged'])
         
     today_str = datetime.now(IST).strftime('%Y-%m-%d')
     yesterday_str = (datetime.now(IST) - timedelta(days=1)).strftime('%Y-%m-%d')
@@ -158,49 +165,51 @@ def render_dashboard(role, dept):
 
     st.write("---")
     st.markdown("### 🚨 Absenteeism & Tardiness Leaderboard")
-    st.caption("Identifies departments, shifts, and employees with the highest absence, late arrival, and early leave practices.")
+    st.caption("Identifies departments, shifts, and employees with the highest absence rates.")
 
     today_present_ids = df_att_dash[df_att_dash['date_only'] == today_str]['emp_id'].unique() if not df_att_dash.empty else []
-    df_dash_emp['Today Status'] = df_dash_emp['emp_id'].apply(lambda x: 'Present' if x in today_present_ids else 'Absent')
+    
+    if not df_dash_emp.empty:
+        df_dash_emp['Today Status'] = df_dash_emp['emp_id'].apply(lambda x: 'Present' if x in today_present_ids else 'Absent')
 
-    d_tab1, d_tab2, d_tab3 = st.tabs(["🏢 Department-Wise", "🕒 Shift-Wise", "👤 Individual Ranks"])
+        d_tab1, d_tab2, d_tab3 = st.tabs(["🏢 Department-Wise", "🕒 Shift-Wise", "👤 Individual Ranks"])
 
-    with d_tab1:
-        # BUG FIX: Safe Data Type conversion for Pandas Division
-        dept_summary = df_dash_emp.groupby('department').agg(
-            Total_Employees=('emp_id', 'count'),
-            Absentees_Today=('Today Status', lambda x: (x == 'Absent').sum()),
-            Presents_Today=('Today Status', lambda x: (x == 'Present').sum())
-        ).reset_index()
-        
-        dept_summary['Total_Employees'] = pd.to_numeric(dept_summary['Total_Employees'], errors='coerce').fillna(0)
-        dept_summary['Absentees_Today'] = pd.to_numeric(dept_summary['Absentees_Today'], errors='coerce').fillna(0)
-        dept_summary['Absence Rate %'] = np.where(dept_summary['Total_Employees'] > 0, (dept_summary['Absentees_Today'] / dept_summary['Total_Employees']) * 100, 0).round(1)
-        
-        dept_summary = dept_summary.sort_values(by=['Absentees_Today', 'Absence Rate %'], ascending=False)
-        st.dataframe(dept_summary.rename(columns={'department': 'Department', 'Total_Employees': 'Total Staff', 'Absentees_Today': 'Absent Today', 'Presents_Today': 'Present Today'}), use_container_width=True)
+        with d_tab1:
+            dept_summary = df_dash_emp.groupby('department').agg(
+                Total_Employees=('emp_id', 'count'),
+                Absentees_Today=('Today Status', lambda x: (x == 'Absent').sum()),
+                Presents_Today=('Today Status', lambda x: (x == 'Present').sum())
+            ).reset_index()
+            
+            dept_summary['Total_Employees'] = pd.to_numeric(dept_summary['Total_Employees'], errors='coerce').fillna(0)
+            dept_summary['Absentees_Today'] = pd.to_numeric(dept_summary['Absentees_Today'], errors='coerce').fillna(0)
+            dept_summary['Absence Rate %'] = np.where(dept_summary['Total_Employees'] > 0, (dept_summary['Absentees_Today'] / dept_summary['Total_Employees']) * 100, 0).round(1)
+            
+            dept_summary = dept_summary.sort_values(by=['Absentees_Today', 'Absence Rate %'], ascending=False)
+            st.dataframe(dept_summary.rename(columns={'department': 'Department', 'Total_Employees': 'Total Staff', 'Absentees_Today': 'Absent Today', 'Presents_Today': 'Present Today'}), use_container_width=True)
 
-    with d_tab2:
-        # BUG FIX: Safe Data Type conversion for Pandas Division
-        shift_summary = df_dash_emp.groupby('shift').agg(
-            Total_Employees=('emp_id', 'count'),
-            Absentees_Today=('Today Status', lambda x: (x == 'Absent').sum()),
-            Presents_Today=('Today Status', lambda x: (x == 'Present').sum())
-        ).reset_index()
-        
-        shift_summary['Total_Employees'] = pd.to_numeric(shift_summary['Total_Employees'], errors='coerce').fillna(0)
-        shift_summary['Absentees_Today'] = pd.to_numeric(shift_summary['Absentees_Today'], errors='coerce').fillna(0)
-        shift_summary['Absence Rate %'] = np.where(shift_summary['Total_Employees'] > 0, (shift_summary['Absentees_Today'] / shift_summary['Total_Employees']) * 100, 0).round(1)
-        
-        shift_summary = shift_summary.sort_values(by=['Absentees_Today', 'Absence Rate %'], ascending=False)
-        st.dataframe(shift_summary.rename(columns={'shift': 'Shift Name', 'Total_Employees': 'Total Staff', 'Absentees_Today': 'Absent Today', 'Presents_Today': 'Present Today'}), use_container_width=True)
+        with d_tab2:
+            shift_summary = df_dash_emp.groupby('shift').agg(
+                Total_Employees=('emp_id', 'count'),
+                Absentees_Today=('Today Status', lambda x: (x == 'Absent').sum()),
+                Presents_Today=('Today Status', lambda x: (x == 'Present').sum())
+            ).reset_index()
+            
+            shift_summary['Total_Employees'] = pd.to_numeric(shift_summary['Total_Employees'], errors='coerce').fillna(0)
+            shift_summary['Absentees_Today'] = pd.to_numeric(shift_summary['Absentees_Today'], errors='coerce').fillna(0)
+            shift_summary['Absence Rate %'] = np.where(shift_summary['Total_Employees'] > 0, (shift_summary['Absentees_Today'] / shift_summary['Total_Employees']) * 100, 0).round(1)
+            
+            shift_summary = shift_summary.sort_values(by=['Absentees_Today', 'Absence Rate %'], ascending=False)
+            st.dataframe(shift_summary.rename(columns={'shift': 'Shift Name', 'Total_Employees': 'Total Staff', 'Absentees_Today': 'Absent Today', 'Presents_Today': 'Present Today'}), use_container_width=True)
 
-    with d_tab3:
-        absent_emp_df = df_dash_emp[df_dash_emp['Today Status'] == 'Absent'][['emp_id', 'name', 'department', 'shift', 'mobile']]
-        if not absent_emp_df.empty:
-            st.dataframe(absent_emp_df.rename(columns={'emp_id': 'ID', 'name': 'Name', 'department': 'Dept', 'shift': 'Shift', 'mobile': 'Phone'}), use_container_width=True)
-        else:
-            st.success("🎉 Perfect Attendance Today! No absentees recorded.")
+        with d_tab3:
+            absent_emp_df = df_dash_emp[df_dash_emp['Today Status'] == 'Absent'][['emp_id', 'name', 'department', 'shift', 'mobile']]
+            if not absent_emp_df.empty:
+                st.dataframe(absent_emp_df.rename(columns={'emp_id': 'ID', 'name': 'Name', 'department': 'Dept', 'shift': 'Shift', 'mobile': 'Phone'}), use_container_width=True)
+            else:
+                st.success("🎉 Perfect Attendance Today! No absentees recorded.")
+    else:
+        st.info("No employee data available.")
 
 def render_access_control():
     st.markdown("### 🔐 Provision Department Access")
@@ -248,7 +257,7 @@ def render_shift_master_ui():
         st.markdown("**2. Upload File**")
         shift_upload_file = st.file_uploader("Upload Shifts CSV", type=["csv"], key="bulk_shift_uploader")
         
-        st.write("---") # TOP-TO-BOTTOM LAYOUT FIX
+        st.write("---") 
         if shift_upload_file and st.button("Process Bulk Shifts"):
             try:
                 df_shf_up = pd.read_csv(shift_upload_file)
@@ -292,12 +301,11 @@ def render_shift_master_ui():
                         st.rerun()
                     except: st.error("⚠️ Error deleting shift.")
                     
-    st.write("---") # TOP-TO-BOTTOM LAYOUT FIX
+    st.write("---") 
     st.markdown("#### Current Active Shifts Database")
     if not df_shifts.empty:
         st.dataframe(df_shifts[["shift_name", "start_time", "duration_hrs", "break_mins"]].rename(
             columns={"shift_name": "Shift Name", "start_time": "Start Time", "duration_hrs": "Working Hrs", "break_mins": "Break (Mins)"}), use_container_width=True)
-
 
 # --- SESSION STATE INITIALIZATION ---
 if "hr_logged_in" not in st.session_state: st.session_state.hr_logged_in = False
@@ -356,7 +364,7 @@ if not st.session_state.hr_logged_in and not st.session_state.super_logged_in:
 
 
 # ==========================================
-#         STATE 2: GENERAL DASHBOARD (HR & DEPT ADMIN)
+#         STATE 2: GENERAL DASHBOARD
 # ==========================================
 elif st.session_state.hr_logged_in:
     col_l, col_main, col_r = st.columns([1, 8, 1])
@@ -371,6 +379,7 @@ elif st.session_state.hr_logged_in:
             
         st.write("---")
         
+        # --- DYNAMIC MENU ---
         menu_options = ["📈 Dashboard", "⏱️ Record Attendance", "📊 Payroll & Logs", "👥 Directory"]
         if st.session_state.user_role == "HR":
             menu_options.insert(3, "👤 Enroll Employees")
@@ -382,8 +391,10 @@ elif st.session_state.hr_logged_in:
         if hr_action == "📈 Dashboard":
             render_dashboard(st.session_state.user_role, st.session_state.user_dept)
         
+        # --- RECORD ATTENDANCE ---
         elif hr_action == "⏱️ Record Attendance":
             st.markdown("### ⏱️ Daily Attendance Capture")
+            
             tab1, tab2 = st.tabs(["📸 Live QR Scanner", "⌨️ Manual Entry"])
             with tab1:
                 if st.session_state.last_scanned_id:
@@ -397,7 +408,7 @@ elif st.session_state.hr_logged_in:
                         st.rerun()
                 else:
                     punch_action = st.radio("Select Action to Enable Scanner:", ["Punch In", "Punch Out", "Break Start", "Break End"], horizontal=True, index=None)
-                    st.write("---") # TOP-TO-BOTTOM LAYOUT FIX
+                    st.write("---") 
                     if punch_action is None: st.warning("⚠️ Please select an action above to activate the camera.")
                     else:
                         st.info(f"🟢 **Scanner Enabled for: {punch_action}**. Point camera at QR code.")
@@ -416,10 +427,12 @@ elif st.session_state.hr_logged_in:
                         supabase.table("attendance").insert({"emp_id": str(manual_id), "method": "Manual Entry", "punch_type": manual_action}).execute()
                         st.success(f"✅ **{manual_action}** successfully recorded for ID: **{manual_id}**")
                         
+        # --- ENROLL EMPLOYEES (ONLY VISIBLE TO HR) ---
         elif hr_action == "👤 Enroll Employees":
             st.markdown("### 👤 Employee Enrollment")
             df_shifts = get_shift_data()
             dynamic_shifts = df_shifts["shift_name"].tolist() if not df_shifts.empty else ["General"]
+            
             e_tab1, e_tab2 = st.tabs(["Single Enrollment", "Bulk Upload (CSV)"])
             with e_tab1:
                 with st.form("enrollment_form", clear_on_submit=True):
@@ -429,6 +442,7 @@ elif st.session_state.hr_logged_in:
                     with c2:
                         dept_val = st.session_state.user_dept if st.session_state.user_role == "Dept Admin" else st.text_input("Department")
                         mobile, shift = st.text_input("Mobile Number"), st.selectbox("Assigned Shift", dynamic_shifts)
+                    
                     if st.form_submit_button("✨ Generate Profile & ID Card") and emp_id and name:
                         try:
                             supabase.table("employees").insert({"emp_id": str(emp_id), "name": name, "department": dept_val, "mobile": mobile, "shift": shift, "status": "Active", "status_updated_on": datetime.now(IST).strftime('%d-%m-%Y')}).execute()
@@ -443,7 +457,7 @@ elif st.session_state.hr_logged_in:
                 st.download_button("📥 Download Sample Template", data="emp_id,name,department,mobile,shift\n1001,John Doe,Sales,9876543210,General", file_name="bulk_enroll.csv", mime="text/csv")
                 st.markdown("**2. Upload File**")
                 uploaded_file = st.file_uploader("Upload Completed CSV", type=["csv"])
-                st.write("---") # TOP-TO-BOTTOM LAYOUT FIX
+                st.write("---")
                 if uploaded_file and st.button("Process Bulk Enrollment"):
                     try:
                         df_upload = pd.read_csv(uploaded_file)
@@ -454,6 +468,7 @@ elif st.session_state.hr_logged_in:
                         st.success("✅ Successfully enrolled employees!")
                     except: st.error("Error reading CSV.")
 
+        # --- EMPLOYEE DIRECTORY & SHIFT MAPPING ---
         elif hr_action == "👥 Directory":
             st.markdown("### 👥 Lifecycle & Shift Mapping")
             dir_tab1, dir_tab2, dir_tab3, dir_tab4, dir_tab5 = st.tabs(["📋 Roster", "🪪 Download ID Cards", "🕒 Shift Mapping", "🔄 Status", "🚪 Early Leave Approval"])
@@ -467,18 +482,22 @@ elif st.session_state.hr_logged_in:
             
             with dir_tab1:
                 status_filter = st.radio("Filter By Status:", ["Active", "Left", "All"], horizontal=True)
-                st.write("---") # TOP-TO-BOTTOM LAYOUT FIX
+                st.write("---") 
                 if not df_emp_main.empty:
                     df_filtered = df_emp_main if status_filter == "All" else df_emp_main[df_emp_main["status"] == status_filter]
-                    st.dataframe(df_filtered[["emp_id", "name", "department", "shift", "mobile", "status"]].rename(columns={"emp_id": "ID", "name": "Name", "department": "Dept", "shift": "Shift", "mobile": "Phone"}), use_container_width=True) if not df_filtered.empty else st.info("No employees found.")
-                else: st.info("No employees found in your scope.")
+                    if not df_filtered.empty:
+                        st.dataframe(df_filtered[["emp_id", "name", "department", "shift", "mobile", "status"]].rename(columns={"emp_id": "ID", "name": "Name", "department": "Dept", "shift": "Shift", "mobile": "Phone"}), use_container_width=True) 
+                    else: 
+                        st.info("No employees found.")
+                else: 
+                    st.info("No employees found in your scope.")
                 
             with dir_tab2:
                 if not df_emp_main.empty:
                     active_emps = df_emp_main[df_emp_main["status"] == "Active"]
                     emp_dict = {f"{r['name']} (ID: {r['emp_id']})": r for _, r in active_emps.iterrows()}
                     selected_emp = st.selectbox("Select Employee for ID Card", list(emp_dict.keys()))
-                    st.write("---") # TOP-TO-BOTTOM LAYOUT FIX
+                    st.write("---") 
                     if selected_emp:
                         ed = emp_dict[selected_emp]
                         id_img = generate_id_card(ed['emp_id'], ed['name'], ed.get('department',''), ed.get('mobile',''))
@@ -548,7 +567,8 @@ elif st.session_state.hr_logged_in:
 
         elif hr_action == "📊 Payroll & Logs":
             st.markdown("### 📊 Automated Payroll & Attendance Logs")
-            p_tab1, p_tab2 = st.tabs(["🧮 Payroll & Penalty Summary", "📜 Raw Punch Logs"])
+            
+            p_tab1, p_tab2, p_tab3 = st.tabs(["🧮 Payroll & Penalty Summary", "📜 Raw Punch Logs", "🚪 Approved Early Leaves"])
             
             df_att_all = get_all_attendance()
             df_emp_all = get_all_employees()
@@ -576,7 +596,7 @@ elif st.session_state.hr_logged_in:
                 date_range = st.date_input("Select Start and End Date", [today, today])
                 report_name = f"Custom_Range" if len(date_range) != 2 else f"Custom_{date_range[0]}_to_{date_range[1]}"
 
-            st.write("---") # TOP-TO-BOTTOM LAYOUT FIX
+            st.write("---") 
             
             with p_tab1:
                 if st.button("Generate Payroll Report"):
@@ -614,8 +634,8 @@ elif st.session_state.hr_logged_in:
                                 df_merged = pd.merge(df_merged, df_shf_all.rename(columns={"shift_name": "shift"}), on="shift", how="left")
                                 
                                 df_merged['start_time'] = df_merged['start_time'].fillna('08:30')
-                                df_merged['duration_hrs'] = df_merged['duration_hrs'].fillna(8.0)
-                                df_merged['break_mins'] = df_merged['break_mins'].fillna(30)
+                                df_merged['duration_hrs'] = pd.to_numeric(df_merged['duration_hrs'], errors='coerce').fillna(8.0)
+                                df_merged['break_mins'] = pd.to_numeric(df_merged['break_mins'], errors='coerce').fillna(30)
                                 
                                 df_merged['Start Limit'] = pd.to_datetime(df_merged['Shift Date'].astype(str) + ' ' + df_merged['start_time']).dt.tz_localize('Asia/Kolkata')
                                 df_merged['End Limit'] = df_merged['Start Limit'] + pd.to_timedelta(df_merged['duration_hrs'], unit='h') + pd.to_timedelta(df_merged['break_mins'], unit='m')
@@ -652,6 +672,7 @@ elif st.session_state.hr_logged_in:
                     else: st.info("No attendance data recorded yet for your department scope.")
 
             with p_tab2:
+                st.markdown("#### Raw Punch Log Stream")
                 if st.button("Generate Raw Log Stream"):
                     if not df_att_all.empty:
                         df_raw_disp = df_att_all.copy()
@@ -660,6 +681,31 @@ elif st.session_state.hr_logged_in:
                             columns={'date_only': 'Date', 'emp_id': 'ID', 'punch_type': 'Action', 'method': 'Method', 'early_leave_approved': 'Approved Early Leave', 'remarks': 'Remarks'}
                         ), use_container_width=True)
                     else: st.info("No raw punch logs available.")
+
+            with p_tab3:
+                st.markdown("#### 🚪 Approved Early Leave Records")
+                if not df_att_all.empty:
+                    el_df = df_att_all[df_att_all['early_leave_approved'] == True].copy()
+                    
+                    if report_type == "Daily Report": el_df = el_df[el_df["date_only"] == str(search_date)]
+                    elif report_type == "Monthly Report": el_df = el_df[(pd.to_datetime(el_df['date_only']).dt.month == month_num) & (pd.to_datetime(el_df['date_only']).dt.year == selected_year)]
+                    elif report_type == "Custom Date Range" and len(date_range) == 2: el_df = el_df[(el_df["date_only"] >= str(date_range[0])) & (el_df["date_only"] <= str(date_range[1]))]
+                    
+                    if not el_df.empty:
+                        el_merged = pd.merge(el_df, df_emp_all[['emp_id', 'name', 'department']], on='emp_id', how='left')
+                        el_merged['Punch Time'] = pd.to_datetime(el_merged['time_logged']).dt.strftime('%d-%m-%Y %I:%M:%S %p')
+                        
+                        disp_cols = ['date_only', 'emp_id', 'name', 'department', 'Punch Time', 'remarks']
+                        el_disp = el_merged[[c for c in disp_cols if c in el_merged.columns]].rename(
+                            columns={'date_only': 'Date', 'emp_id': 'ID', 'name': 'Name', 'department': 'Dept', 'remarks': 'Reason/Remarks'}
+                        )
+                        st.dataframe(el_disp, use_container_width=True)
+                        csv_el = el_disp.to_csv(index=False).encode('utf-8')
+                        st.download_button("📥 Export Early Leaves CSV", data=csv_el, file_name=f"Joy_EarlyLeaves_{report_name}.csv", mime="text/csv")
+                    else:
+                        st.info("No approved early leaves found for the selected date range.")
+                else:
+                    st.info("No records available.")
 
         elif hr_action == "⚙️ Shift Master": render_shift_master_ui()
         elif hr_action == "🔐 Access Control": render_access_control()
@@ -684,5 +730,6 @@ elif st.session_state.super_logged_in:
             st.markdown("#### System Roster")
             try:
                 hr_list = supabase.table("hr_users").select("id, username, role, department").execute()
-                if hr_list.data: st.dataframe(pd.DataFrame(hr_list.data).rename(columns={"username": "Identity", "role": "Role", "department": "Scope"}), use_container_width=True)
+                if hr_list.data: 
+                    st.dataframe(pd.DataFrame(hr_list.data).rename(columns={"username": "Identity", "role": "Role", "department": "Scope"}), use_container_width=True)
             except: st.error("Network error.")
