@@ -228,9 +228,10 @@ elif st.session_state.hr_logged_in:
             
         st.write("---")
         
-        # Build menu dynamically based on role
-        menu_options = ["📈 Dashboard", "⏱️ Record Attendance", "📊 Payroll & Logs", "👤 Enroll Employees", "👥 Directory"]
+        # --- DYNAMIC MENU: Removes "Enroll Employees" for Dept Admins ---
+        menu_options = ["📈 Dashboard", "⏱️ Record Attendance", "📊 Payroll & Logs", "👥 Directory"]
         if st.session_state.user_role == "HR":
+            menu_options.insert(3, "👤 Enroll Employees")
             menu_options.extend(["⚙️ Shift Master", "🔐 Access Control"])
             
         hr_action = st.radio("Select Module:", menu_options, horizontal=True)
@@ -255,7 +256,6 @@ elif st.session_state.hr_logged_in:
                         st.session_state.camera_key += 1
                         st.rerun()
                 else:
-                    # NEW REQUIREMENT: Must select action BEFORE scanner enables
                     punch_action = st.radio("Select Action to Enable Scanner:", ["Punch In", "Punch Out", "Break Start", "Break End"], horizontal=True, index=None)
                     
                     if punch_action is None:
@@ -277,7 +277,7 @@ elif st.session_state.hr_logged_in:
                         supabase.table("attendance").insert({"emp_id": manual_id, "method": "Manual Entry", "punch_type": manual_action}).execute()
                         st.success(f"✅ **{manual_action}** successfully recorded for ID: **{manual_id}**")
                         
-        # --- ENROLL EMPLOYEES ---
+        # --- ENROLL EMPLOYEES (ONLY VISIBLE TO HR) ---
         elif hr_action == "👤 Enroll Employees":
             st.markdown("### 👤 Employee Enrollment")
             df_shifts = get_shift_data()
@@ -366,7 +366,6 @@ elif st.session_state.hr_logged_in:
                     if shift_file and st.button("Update Bulk Shifts"):
                         df_shf = pd.read_csv(shift_file)
                         for _, row in df_shf.iterrows():
-                            # Security: only update if emp_id is in df_emp_main (their department)
                             if str(row['emp_id']) in df_emp_main['emp_id'].astype(str).values:
                                 try: supabase.table("employees").update({"shift": str(row['shift'])}).eq("emp_id", str(row['emp_id'])).execute()
                                 except: pass
@@ -385,8 +384,8 @@ elif st.session_state.hr_logged_in:
                         else: st.error("❌ You cannot modify this employee ID.")
 
         # --- HR EXCLUSIVES ---
-        elif hr_action == "📊 Payroll & Logs": st.info("Payroll computation module active.") # (Truncated for space, uses existing logic but filters df_merged by user_dept if Dept Admin)
-        elif hr_action == "⚙️ Shift Master": st.info("Manage Master Shifts (Global).") # Uses existing shift UI
+        elif hr_action == "📊 Payroll & Logs": st.info("Payroll computation module active.") 
+        elif hr_action == "⚙️ Shift Master": st.info("Manage Master Shifts (Global).") 
         elif hr_action == "🔐 Access Control": render_access_control()
 
 # ==========================================
