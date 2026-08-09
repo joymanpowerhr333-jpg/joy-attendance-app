@@ -16,9 +16,6 @@ st.set_page_config(page_title="Joy Corporate Solutions", page_icon="🏢", layou
 # Set up Indian Standard Time (IST) globally
 IST = timezone(timedelta(hours=5, minutes=30))
 
-# Standard Shift Options List
-SHIFT_OPTIONS = ["General", "1st shift", "2nd Shift", "3rd Shift", "12Hr Day", "12Hr Night"]
-
 def get_base64_of_bin_file(bin_file):
     with open(bin_file, 'rb') as f:
         data = f.read()
@@ -82,6 +79,16 @@ key = st.secrets["SUPABASE_KEY"]
 supabase: Client = create_client(url, key)
 
 # --- HELPER FUNCTIONS ---
+def get_dynamic_shifts():
+    """Fetches real-time shift list from the database."""
+    try:
+        res = supabase.table("shifts").select("shift_name").execute()
+        if res.data:
+            return [row["shift_name"] for row in res.data]
+        return ["General"]
+    except:
+        return ["General"]
+
 def generate_id_card(emp_id, name, department, mobile):
     qr = qrcode.QRCode(box_size=10, border=4)
     qr.add_data(emp_id)
@@ -106,22 +113,65 @@ def generate_id_card(emp_id, name, department, mobile):
     return id_card
 
 def check_punch_status(emp_id):
-    """Returns 'Punch In', 'Punch Out', or 'Limit Reached' based on today's scans in IST."""
     today_ist_str = datetime.now(IST).strftime('%Y-%m-%d')
     res = supabase.table("attendance").select("*").eq("emp_id", emp_id).execute()
     
-    if not res.data:
-        return "Punch In"
+    if not res.data: return "Punch In"
         
     df = pd.DataFrame(res.data)
     df["time_logged"] = pd.to_datetime(df["time_logged"]).dt.tz_convert('Asia/Kolkata')
     df["date_only"] = df["time_logged"].dt.strftime('%Y-%m-%d')
-    
     punches_today = len(df[df["date_only"] == today_ist_str])
     
     if punches_today == 0: return "Punch In"
     elif punches_today == 1: return "Punch Out"
     else: return "Limit Reached"
+
+def render_shift_master_ui():
+    """Centralized Shift Master UI for both HR and Super Admin."""
+    st.markdown("### ⚙️ Shift Master Management")
+    
+    current_shifts = get_dynamic_shifts()
+    st.info(f"**Current Active Shifts:** {', '.join(current_shifts)}")
+    
+    tab1, tab2, tab3 = st.tabs(["➕ Add Shift", "✏️ Edit Shift", "❌ Delete Shift"])
+    
+    with tab1:
+        with st.form("add_shift_form", clear_on_submit=True):
+            new_shift = st.text_input("New Shift Name (e.g., Weekend Shift)")
+            if st.form_submit_button("Add Shift"):
+                if new_shift:
+                    try:
+                        supabase.table("shifts").insert({"shift_name": new_shift}).execute()
+                        st.success(f"✅ Added {new_shift} successfully!")
+                        st.rerun()
+                    except: st.error("⚠️ Shift already exists or database error.")
+
+    with tab2:
+        with st.form("edit_shift_form", clear_on_submit=True):
+            old_shift = st.selectbox("Select Shift to Edit", current_shifts)
+            edited_shift = st.text_input("Enter New Name")
+            if st.form_submit_button("Update Shift"):
+                if old_shift and edited_shift:
+                    try:
+                        # Update the shift list
+                        supabase.table("shifts").update({"shift_name": edited_shift}).eq("shift_name", old_shift).execute()
+                        # Auto-update all employees currently assigned to the old shift!
+                        supabase.table("employees").update({"shift": edited_shift}).eq("shift", old_shift).execute()
+                        st.success(f"✅ Changed {old_shift} to {edited_shift} and updated employees!")
+                        st.rerun()
+                    except: st.error("⚠️ Error updating shift.")
+
+    with tab3:
+        with st.form("delete_shift_form"):
+            del_shift = st.selectbox("Select Shift to Remove", current_shifts)
+            if st.form_submit_button("Delete Shift"):
+                if del_shift:
+                    try:
+                        supabase.table("shifts").delete().eq("shift_name", del_shift).execute()
+                        st.success(f"✅ Deleted {del_shift}!")
+                        st.rerun()
+                    except: st.error("⚠️ Error deleting shift.")
 
 # --- SESSION STATE ---
 if "hr_logged_in" not in st.session_state: st.session_state.hr_logged_in = False
@@ -190,10 +240,10 @@ elif st.session_state.hr_logged_in:
             st.rerun()
             
         st.write("---")
-        hr_action = st.radio("Select Module:", ["⏱️ Record Attendance", "📊 View Logs", "👤 Enroll Employees", "👥 Employee Directory"], horizontal=True)
+        hr_action = st.radio("Select Module:", ["⏱️ Record Attendance", "📊 View Logs", "👤 Enroll Employees", "👥 Employee Directory", "⚙️ Shift Master"], horizontal=True)
         st.write("<br>", unsafe_allow_html=True)
         
-        # --- 1. RECORD ATTENDANCE (IN/OUT LOGIC) ---
+        # --- 1. RECORD ATTENDANCE ---
         if hr_action == "⏱️ Record Attendance":
             st.markdown("### ⏱️ Daily Attendance Capture (In / Out)")
             
@@ -226,8 +276,7 @@ elif st.session_state.hr_logged_in:
                         
                         st.session_state.camera_key += 1
                         st.rerun()
-                    else:
-                        st.error("⚠️ No QR code detected. Please try again.")
+                    else: st.error("⚠️ No QR code detected. Please try again.")
             
             with tab2:
                 with st.form("manual_entry_form", clear_on_submit=True):
@@ -242,9 +291,10 @@ elif st.session_state.hr_logged_in:
                             supabase.table("attendance").insert({"emp_id": manual_id, "method": "Manual Entry", "punch_type": punch_type}).execute()
                             st.success(f"✅ {punch_type} successfully recorded for ID: **{manual_id}**")
                         
-        # --- 2. ENROLL EMPLOYEES (SINGLE & BULK) ---
+        # --- 2. ENROLL EMPLOYEES ---
         elif hr_action == "👤 Enroll Employees":
             st.markdown("### 👤 Employee Enrollment")
+            dynamic_shifts = get_dynamic_shifts()
             
             e_tab1, e_tab2 = st.tabs(["Single Enrollment", "Bulk Upload (CSV)"])
             
@@ -257,7 +307,7 @@ elif st.session_state.hr_logged_in:
                     with col2:
                         department = st.text_input("Department")
                         mobile = st.text_input("Mobile Number")
-                        shift = st.selectbox("Shift", SHIFT_OPTIONS)
+                        shift = st.selectbox("Shift", dynamic_shifts)
                     
                     submit_button = st.form_submit_button("✨ Generate Profile & ID Card")
                 
@@ -273,15 +323,13 @@ elif st.session_state.hr_logged_in:
                         id_card = generate_id_card(emp_id, name, department, mobile)
                         img_col1, img_col2, img_col3 = st.columns([1, 2, 1])
                         with img_col2: st.image(id_card, caption=f"ID Card for {name} (Right-click to Save)")
-                    except Exception as e:
-                        st.error("⚠️ Error saving. ID might already exist.")
+                    except Exception as e: st.error("⚠️ Error saving. ID might already exist.")
                         
             with e_tab2:
                 st.info("Upload a CSV file to enroll multiple employees at once.")
                 st.markdown("**Required Columns:** `emp_id`, `name`, `department`, `mobile`, `shift`")
                 
-                # Sample CSV with the updated shift names
-                sample_csv = "emp_id,name,department,mobile,shift\n1001,John Doe,Sales,9876543210,General\n1002,Jane Smith,IT,8765432109,1st shift\n1003,Raj Kumar,Production,9812345678,12Hr Day"
+                sample_csv = "emp_id,name,department,mobile,shift\n1001,John Doe,Sales,9876543210,General\n1002,Jane Smith,IT,8765432109,1st shift"
                 st.download_button("📥 Download Sample CSV Template", data=sample_csv, file_name="bulk_enroll_template.csv", mime="text/csv")
                 
                 uploaded_file = st.file_uploader("Upload Completed CSV", type=["csv"])
@@ -301,14 +349,12 @@ elif st.session_state.hr_logged_in:
                                         "status": "Active", "status_updated_on": current_date
                                     }).execute()
                                     success_count += 1
-                                except Exception as e:
-                                    st.error(f"Failed to add ID {row['emp_id']} (Might be duplicate)")
+                                except Exception as e: st.error(f"Failed to add ID {row['emp_id']} (Might be duplicate)")
                             
                             st.success(f"✅ Successfully enrolled {success_count} employees!")
-                        except Exception as e:
-                            st.error("Error reading CSV. Ensure columns match the template exactly.")
+                        except Exception as e: st.error("Error reading CSV. Ensure columns match the template exactly.")
 
-        # --- 3. EMPLOYEE DIRECTORY, ID DOWNLOADS & SHIFT MAPPING ---
+        # --- 3. EMPLOYEE DIRECTORY ---
         elif hr_action == "👥 Employee Directory":
             st.markdown("### 👥 Lifecycle & ID Management")
             
@@ -327,6 +373,7 @@ elif st.session_state.hr_logged_in:
                 return pd.DataFrame()
                 
             df_emp_main = get_all_employees()
+            dynamic_shifts = get_dynamic_shifts()
             
             with dir_tab1:
                 if not df_emp_main.empty:
@@ -358,14 +405,8 @@ elif st.session_state.hr_logged_in:
                         byte_im = buf.getvalue()
                         
                         st.image(id_img, width=300)
-                        st.download_button(
-                            label=f"📥 Download ID for {emp_data['name']}",
-                            data=byte_im,
-                            file_name=f"ID_Card_{emp_data['emp_id']}.png",
-                            mime="image/png"
-                        )
-                else:
-                    st.info("No active employees available.")
+                        st.download_button(label=f"📥 Download ID for {emp_data['name']}", data=byte_im, file_name=f"ID_Card_{emp_data['emp_id']}.png", mime="image/png")
+                else: st.info("No active employees available.")
 
             with dir_tab3:
                 st.markdown("#### Shift Mapping")
@@ -378,7 +419,7 @@ elif st.session_state.hr_logged_in:
                         if not df_emp_main.empty:
                             emp_map_dict = {f"{r['name']} (ID: {r['emp_id']})": r['emp_id'] for _, r in df_emp_main.iterrows()}
                             map_sel = st.selectbox("Select Employee", list(emp_map_dict.keys()))
-                            new_shift = st.selectbox("Assign Shift", SHIFT_OPTIONS)
+                            new_shift = st.selectbox("Assign Shift", dynamic_shifts)
                             if st.form_submit_button("Update Shift"):
                                 emp_target_id = emp_map_dict[map_sel]
                                 supabase.table("employees").update({"shift": new_shift}).eq("emp_id", emp_target_id).execute()
@@ -386,7 +427,7 @@ elif st.session_state.hr_logged_in:
                         else: st.write("No employees available.")
                 with s_col2:
                     st.markdown("**Bulk Update**")
-                    bulk_shift_csv = "emp_id,shift\n1001,1st shift\n1002,2nd Shift\n1003,12Hr Night"
+                    bulk_shift_csv = "emp_id,shift\n1001,1st shift\n1002,12Hr Day"
                     st.download_button("📥 Shift Mapping Template", data=bulk_shift_csv, file_name="shift_mapping.csv", mime="text/csv")
                     shift_file = st.file_uploader("Upload Shift CSV", type=["csv"])
                     if shift_file and st.button("Update Bulk Shifts"):
@@ -449,7 +490,6 @@ elif st.session_state.hr_logged_in:
                 df_emp = pd.DataFrame(emp_res.data) if emp_res.data else pd.DataFrame(columns=["emp_id", "name", "department", "shift"])
                 
                 if "punch_type" not in df_att.columns: df_att["punch_type"] = "N/A"
-                
                 if not df_emp.empty: df = pd.merge(df_att, df_emp, on="emp_id", how="left")
                 else:
                     df = df_att
@@ -478,6 +518,10 @@ elif st.session_state.hr_logged_in:
                         st.download_button(f"📥 Export {report_name} CSV", data=csv, file_name=f'Joy_Attendance_{report_name}.csv', mime='text/csv')
                     else: st.info("No attendance records found for this date range.")
             else: st.info("No attendance records found yet.")
+            
+        # --- 5. SHIFT MASTER ---
+        elif hr_action == "⚙️ Shift Master":
+            render_shift_master_ui()
 
 # ==========================================
 #         STATE 3: SUPER ADMIN DASHBOARD
@@ -492,7 +536,7 @@ elif st.session_state.super_logged_in:
             st.rerun()
             
         st.write("---")
-        sa_tab1, sa_tab2 = st.tabs(["➕ Provision HR Accounts", "👥 Security Audit & Directory"])
+        sa_tab1, sa_tab2, sa_tab3 = st.tabs(["➕ Provision HR Accounts", "👥 Security Audit & Directory", "⚙️ Shift Master"])
         
         with sa_tab1:
             with st.form("new_hr_form"):
@@ -514,3 +558,6 @@ elif st.session_state.super_logged_in:
                     st.dataframe(df_hr, use_container_width=True)
                 else: st.info("No active nodes on network.")
             except Exception: st.error("Network error retrieving users.")
+            
+        with sa_tab3:
+            render_shift_master_ui()
