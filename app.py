@@ -1,14 +1,13 @@
 import streamlit as st
 from supabase import create_client, Client
 import qrcode
-import cv2
-import numpy as np
 import pandas as pd
 from PIL import Image, ImageDraw, ImageFont
 from datetime import datetime, timezone, timedelta
 import base64
 import os
 import io
+from streamlit_qrcode_scanner import qrcode_scanner
 
 # --- PAGE CONFIGURATION & UI STYLING ---
 st.set_page_config(page_title="Joy Corporate Solutions", page_icon="🏢", layout="wide")
@@ -108,7 +107,6 @@ def generate_id_card(emp_id, name, department, mobile):
     return id_card
 
 def check_punch_status(emp_id):
-    """Guarantees alternating punches (In -> Out -> In) regardless of night shifts."""
     res = supabase.table("attendance").select("punch_type").eq("emp_id", emp_id).order("id", desc=True).limit(1).execute()
     if not res.data: return "Punch In"
     return "Punch In" if res.data[0]['punch_type'] == "Punch Out" else "Punch Out"
@@ -124,7 +122,6 @@ def render_shift_master_ui():
         current_shifts = df_shifts["shift_name"].tolist()
     else: current_shifts = []
 
-    # Generate every 30-minute interval (00:00, 00:30, 01:00 ... 23:30)
     ALLOWED_TIMES = [f"{str(h).zfill(2)}:{m}" for h in range(24) for m in ["00", "30"]]
     
     tab1, tab_bulk, tab2, tab3 = st.tabs(["➕ Add Shift", "📤 Bulk Upload", "✏️ Edit Shift", "❌ Delete Shift"])
@@ -134,7 +131,7 @@ def render_shift_master_ui():
             col1, col2 = st.columns(2)
             with col1:
                 new_shift = st.text_input("New Shift Name")
-                start_time = st.selectbox("Shift Start Time", ALLOWED_TIMES, index=17) # Defaults to 08:30
+                start_time = st.selectbox("Shift Start Time", ALLOWED_TIMES, index=17) 
             with col2:
                 duration = st.number_input("Working Hours", min_value=1.0, max_value=24.0, value=8.0, step=0.5)
                 break_time = st.selectbox("Break Duration", [0, 30, 45, 60, 90, 120], format_func=lambda x: f"{x} Minutes")
@@ -162,12 +159,12 @@ def render_shift_master_ui():
                     try:
                         supabase.table("shifts").insert({
                             "shift_name": str(row['shift_name']),
-                            "start_time": str(row['start_time']).zfill(5), # ensures 6:30 becomes 06:30
+                            "start_time": str(row['start_time']).zfill(5), 
                             "duration_hrs": float(row['duration_hrs']),
                             "break_mins": int(row['break_mins'])
                         }).execute()
                         success_count += 1
-                    except: pass # Skip if duplicate shift name
+                    except: pass 
                 st.success(f"✅ Successfully added {success_count} shifts!")
                 st.rerun()
             except Exception as e:
@@ -273,32 +270,36 @@ elif st.session_state.hr_logged_in:
         hr_action = st.radio("Select Module:", ["⏱️ Record Attendance", "📊 Payroll & Logs", "👤 Enroll Employees", "👥 Directory", "⚙️ Shift Master"], horizontal=True)
         st.write("<br>", unsafe_allow_html=True)
         
-        # --- 1. RECORD ATTENDANCE ---
+        # --- 1. RECORD ATTENDANCE (LIVE SCANNER) ---
         if hr_action == "⏱️ Record Attendance":
             st.markdown("### ⏱️ Daily Attendance Capture (In / Out)")
             
             if st.session_state.success_msg:
                 st.success(st.session_state.success_msg)
                 st.session_state.success_msg = ""
+            if st.session_state.error_msg:
+                st.warning(st.session_state.error_msg)
+                st.session_state.error_msg = ""
             
-            tab1, tab2 = st.tabs(["📸 3D QR Scanner", "⌨️ Manual Entry"])
+            tab1, tab2 = st.tabs(["📸 Live QR Scanner", "⌨️ Manual Entry"])
+            
             with tab1:
-                st.info("Scanner alternates automatically (Scan 1 = In, Scan 2 = Out).")
-                scan_image = st.camera_input("Scanner Camera", key=f"qr_cam_{st.session_state.camera_key}")
+                st.info("Scanner alternates automatically (Scan 1 = In, Scan 2 = Out). Point your camera at the QR code.")
                 
-                if scan_image and st.button("Submit QR Attendance"):
-                    bytes_data = scan_image.getvalue()
-                    cv2_img = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
-                    detector = cv2.QRCodeDetector()
-                    data, bbox, _ = detector.detectAndDecode(cv2_img)
+                # The live scanner component triggers immediately upon recognizing a QR code
+                qr_code = qrcode_scanner(key=f"qr_cam_{st.session_state.camera_key}")
+                
+                if qr_code:
+                    punch_type = check_punch_status(qr_code)
+                    if punch_type == "Limit Reached":
+                        st.session_state.error_msg = f"⚠️ Limit Reached: Employee ID {qr_code} has already Punched In and Out today!"
+                    else:
+                        supabase.table("attendance").insert({"emp_id": qr_code, "method": "QR Code", "punch_type": punch_type}).execute()
+                        st.session_state.success_msg = f"✅ {punch_type} successfully recorded for ID: **{qr_code}**"
                     
-                    if data:
-                        punch_type = check_punch_status(data)
-                        supabase.table("attendance").insert({"emp_id": data, "method": "QR Code", "punch_type": punch_type}).execute()
-                        st.session_state.success_msg = f"✅ {punch_type} successfully recorded for ID: **{data}**"
-                        st.session_state.camera_key += 1
-                        st.rerun()
-                    else: st.error("⚠️ No QR code detected. Please try again.")
+                    # Advance the camera key to reset the scanner for the next person
+                    st.session_state.camera_key += 1
+                    st.rerun()
             
             with tab2:
                 with st.form("manual_entry_form", clear_on_submit=True):
@@ -306,8 +307,11 @@ elif st.session_state.hr_logged_in:
                     manual_submit = st.form_submit_button("Record Manual Punch")
                     if manual_submit and manual_id:
                         punch_type = check_punch_status(manual_id)
-                        supabase.table("attendance").insert({"emp_id": manual_id, "method": "Manual Entry", "punch_type": punch_type}).execute()
-                        st.success(f"✅ {punch_type} successfully recorded for ID: **{manual_id}**")
+                        if punch_type == "Limit Reached":
+                            st.warning(f"⚠️ Limit Reached: Employee ID {manual_id} has already Punched In and Out today!")
+                        else:
+                            supabase.table("attendance").insert({"emp_id": manual_id, "method": "Manual Entry", "punch_type": punch_type}).execute()
+                            st.success(f"✅ {punch_type} successfully recorded for ID: **{manual_id}**")
                         
         # --- 2. ENROLL EMPLOYEES ---
         elif hr_action == "👤 Enroll Employees":
