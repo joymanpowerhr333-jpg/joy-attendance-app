@@ -94,7 +94,27 @@ def generate_id_card(emp_id, name, department, mobile):
     draw.text((20, height + 110), f"Phone: {mobile}", fill="#666666", font=font_small)
     return id_card
 
-# --- DASHBOARD WITH MTD ABSENT DAYS ANALYTICS ---
+# --- PASSWORD CHANGE MODULE ---
+def render_password_change(username):
+    st.markdown("### 🔑 Change Account Password")
+    with st.form("pwd_change_form", clear_on_submit=True):
+        old_pwd = st.text_input("Current Password", type="password")
+        new_pwd = st.text_input("New Password", type="password")
+        confirm_pwd = st.text_input("Confirm New Password", type="password")
+        if st.form_submit_button("Update Password"):
+            if not old_pwd or not new_pwd:
+                st.error("⚠️ Please fill in all fields.")
+            elif new_pwd != confirm_pwd:
+                st.error("⚠️ New passwords do not match.")
+            else:
+                chk = supabase.table("hr_users").select("*").eq("username", username).eq("password", old_pwd).execute()
+                if chk.data:
+                    supabase.table("hr_users").update({"password": new_pwd}).eq("username", username).execute()
+                    st.success("✅ Password updated successfully!")
+                else:
+                    st.error("❌ Incorrect current password.")
+
+# --- DASHBOARD ---
 def render_dashboard(role, dept):
     st.markdown("### 📈 Real-Time Attendance Analytics")
     df_emp = get_all_employees()
@@ -177,7 +197,6 @@ def render_dashboard(role, dept):
     if not df_dash_emp.empty:
         df_dash_emp['Today Status'] = df_dash_emp['emp_id'].apply(lambda x: 'Present' if x in today_present_ids else 'Absent')
         
-        # Calculate Number of Absent Days (MTD)
         if not df_mtd.empty:
             emp_present_counts = df_mtd.groupby('emp_id')['date_only'].nunique().to_dict()
             df_dash_emp['MTD Present'] = df_dash_emp['emp_id'].map(emp_present_counts).fillna(0)
@@ -405,7 +424,7 @@ elif st.session_state.hr_logged_in:
         st.write("---")
         
         # --- DYNAMIC MENU ---
-        menu_options = ["📈 Dashboard", "⏱️ Record Attendance", "📊 Payroll & Logs", "👥 Directory"]
+        menu_options = ["📈 Dashboard", "⏱️ Record Attendance", "📊 Payroll & Logs", "👥 Directory", "🔑 Change Password"]
         if st.session_state.user_role == "HR":
             menu_options.insert(3, "👤 Enroll Employees")
             menu_options.extend(["⚙️ Shift Master", "🔐 Access Control"])
@@ -415,6 +434,9 @@ elif st.session_state.hr_logged_in:
 
         if hr_action == "📈 Dashboard":
             render_dashboard(st.session_state.user_role, st.session_state.user_dept)
+        
+        elif hr_action == "🔑 Change Password":
+            render_password_change(st.session_state.hr_username)
         
         # --- RECORD ATTENDANCE ---
         elif hr_action == "⏱️ Record Attendance":
@@ -493,12 +515,11 @@ elif st.session_state.hr_logged_in:
                         st.success("✅ Successfully enrolled employees!")
                     except: st.error("Error reading CSV.")
 
-        # --- EMPLOYEE DIRECTORY & SHIFT MAPPING ---
+        # --- EMPLOYEE DIRECTORY & DELETE OPTION ---
         elif hr_action == "👥 Directory":
-            st.markdown("### 👥 Lifecycle & Shift Mapping")
+            st.markdown("### 👥 Directory, Lifecycle & ID Management")
             
-            # REMOVED ROSTER TAB COMPLETELY
-            dir_tab1, dir_tab2, dir_tab3, dir_tab4 = st.tabs(["🪪 Download ID Cards", "🕒 Shift Mapping", "🔄 Status", "🚪 Early Leave Approval"])
+            dir_tab1, dir_tab2, dir_tab3, dir_tab4, dir_tab5 = st.tabs(["📋 Employee Directory", "🪪 Download ID Cards", "🕒 Shift Mapping", "🔄 Status & Delete", "🚪 Early Leave Approval"])
             
             df_emp_main = get_all_employees()
             if st.session_state.user_role == "Dept Admin" and not df_emp_main.empty:
@@ -506,8 +527,21 @@ elif st.session_state.hr_logged_in:
                 
             df_shifts = get_shift_data()
             dynamic_shifts = df_shifts["shift_name"].tolist() if not df_shifts.empty else ["General"]
-                
+            
             with dir_tab1:
+                status_filter = st.radio("Filter By Status:", ["Active", "Left", "All"], horizontal=True, key="dir_status_filter")
+                st.write("---")
+                if not df_emp_main.empty:
+                    df_filtered = df_emp_main if status_filter == "All" else df_emp_main[df_emp_main["status"] == status_filter]
+                    if not df_filtered.empty:
+                        dir_disp = df_filtered[["emp_id", "name", "department", "shift", "mobile", "status"]].rename(columns={"emp_id": "ID", "name": "Name", "department": "Dept", "shift": "Shift", "mobile": "Phone"})
+                        st.dataframe(dir_disp, use_container_width=True)
+                        csv_dir = dir_disp.to_csv(index=False).encode('utf-8')
+                        st.download_button("📥 Export Directory CSV", data=csv_dir, file_name="Joy_Employee_Directory.csv", mime="text/csv")
+                    else: st.info("No employees found.")
+                else: st.info("No employees found in your scope.")
+                
+            with dir_tab2:
                 if not df_emp_main.empty:
                     active_emps = df_emp_main[df_emp_main["status"] == "Active"]
                     emp_dict = {f"{r['name']} (ID: {r['emp_id']})": r for _, r in active_emps.iterrows()}
@@ -521,7 +555,7 @@ elif st.session_state.hr_logged_in:
                         st.image(id_img, width=300)
                         st.download_button(label=f"📥 Download ID", data=buf.getvalue(), file_name=f"ID_{ed['emp_id']}.png", mime="image/png")
                         
-            with dir_tab2:
+            with dir_tab3:
                 s_col1, s_col2 = st.columns(2)
                 with s_col1:
                     with st.form("single_shift_form"):
@@ -545,19 +579,35 @@ elif st.session_state.hr_logged_in:
                                 except: pass
                         st.success(f"Updated shifts successfully!")
 
-            with dir_tab3:
-                with st.form("status_update_form"):
+            with dir_tab4:
+                st.markdown("#### 🔄 Update Status or ❌ Delete Employee Profile")
+                with st.form("status_delete_form"):
                     c1, c2, c3 = st.columns(3)
                     with c1: update_id = st.text_input("Enter Employee ID")
-                    with c2: new_status = st.selectbox("New Status", ["Left", "Active"])
+                    with c2: new_status = st.selectbox("New Status", ["Active", "Left"])
                     with c3: eff_date = st.date_input("Effective Date", datetime.now(IST).date())
-                    if st.form_submit_button("Update Status") and update_id:
+                    
+                    col_sub1, col_sub2 = st.columns(2)
+                    with col_sub1:
+                        submit_status = st.form_submit_button("Update Status")
+                    with col_sub2:
+                        submit_delete = st.form_submit_button("🗑️ Delete Employee permanently")
+                        
+                    if update_id:
                         if str(update_id) in df_emp_main['emp_id'].astype(str).values:
-                            supabase.table("employees").update({"status": new_status, "status_updated_on": eff_date.strftime('%d-%m-%Y')}).eq("emp_id", str(update_id)).execute()
-                            st.success(f"✅ Employee updated!")
-                        else: st.error("❌ You cannot modify this employee ID.")
+                            if submit_status:
+                                supabase.table("employees").update({"status": new_status, "status_updated_on": eff_date.strftime('%d-%m-%Y')}).eq("emp_id", str(update_id)).execute()
+                                st.success(f"✅ Employee status updated!")
+                                st.rerun()
+                            if submit_delete:
+                                supabase.table("employees").delete().eq("emp_id", str(update_id)).execute()
+                                st.success(f"🗑️ Employee ID {update_id} permanently deleted from system database!")
+                                st.rerun()
+                        else:
+                            if submit_status or submit_delete:
+                                st.error("❌ You cannot modify or delete an employee ID outside your scope.")
 
-            with dir_tab4:
+            with dir_tab5:
                 st.markdown("#### 🚪 Individual Early Leave Approval / Permission")
                 if not df_emp_main.empty:
                     emp_el_dict = {f"{r['name']} (ID: {r['emp_id']})": str(r['emp_id']) for _, r in df_emp_main.iterrows()}
@@ -580,6 +630,7 @@ elif st.session_state.hr_logged_in:
                                 st.success(f"✅ Permission log created for Employee {target_id} on {target_date_str}!")
                 else: st.info("No employees available for early leave updates.")
 
+        # --- VIEW PAYROLL & LOGS ---
         elif hr_action == "📊 Payroll & Logs":
             st.markdown("### 📊 Automated Payroll & Attendance Logs")
             
@@ -690,11 +741,27 @@ elif st.session_state.hr_logged_in:
                 st.markdown("#### Raw Punch Log Stream")
                 if st.button("Generate Raw Log Stream"):
                     if not df_att_all.empty:
-                        df_raw_disp = df_att_all.copy()
-                        df_raw_disp['Punch Time'] = pd.to_datetime(df_raw_disp['time_logged']).dt.strftime('%d-%m-%Y %I:%M:%S %p')
-                        st.dataframe(df_raw_disp[['date_only', 'emp_id', 'punch_type', 'method', 'Punch Time', 'early_leave_approved', 'remarks']].rename(
-                            columns={'date_only': 'Date', 'emp_id': 'ID', 'punch_type': 'Action', 'method': 'Method', 'early_leave_approved': 'Approved Early Leave', 'remarks': 'Remarks'}
-                        ), use_container_width=True)
+                        df_raw_filtered = df_att_all.copy()
+                        if report_type == "Daily Report": df_raw_filtered = df_raw_filtered[df_raw_filtered["date_only"] == str(search_date)]
+                        elif report_type == "Monthly Report": df_raw_filtered = df_raw_filtered[(pd.to_datetime(df_raw_filtered['date_only']).dt.month == month_num) & (pd.to_datetime(df_raw_filtered['date_only']).dt.year == selected_year)]
+                        elif report_type == "Custom Date Range" and len(date_range) == 2: df_raw_filtered = df_raw_filtered[(df_raw_filtered["date_only"] >= str(date_range[0])) & (df_raw_filtered["date_only"] <= str(date_range[1]))]
+
+                        if not df_raw_filtered.empty:
+                            df_raw_disp = df_raw_filtered.copy()
+                            df_raw_disp['Punch Time'] = pd.to_datetime(df_raw_disp['time_logged']).dt.strftime('%d-%m-%Y %I:%M:%S %p')
+                            
+                            # Merge employee name/dept for context
+                            df_raw_disp = pd.merge(df_raw_disp, df_emp_all[['emp_id', 'name', 'department']], on='emp_id', how='left')
+                            
+                            raw_cols = ['date_only', 'emp_id', 'name', 'department', 'punch_type', 'method', 'Punch Time', 'early_leave_approved', 'remarks']
+                            raw_disp_final = df_raw_disp[[c for c in raw_cols if c in df_raw_disp.columns]].rename(
+                                columns={'date_only': 'Date', 'emp_id': 'ID', 'name': 'Name', 'department': 'Dept', 'punch_type': 'Action', 'method': 'Method', 'early_leave_approved': 'Approved Early Leave', 'remarks': 'Remarks'}
+                            )
+                            st.dataframe(raw_disp_final, use_container_width=True)
+                            csv_raw = raw_disp_final.to_csv(index=False).encode('utf-8')
+                            st.download_button("📥 Export Raw Logs CSV", data=csv_raw, file_name=f"Joy_Raw_Logs_{report_name}.csv", mime="text/csv")
+                        else:
+                            st.info("No raw logs found for the selected date scope.")
                     else: st.info("No raw punch logs available.")
 
             with p_tab3:
@@ -732,19 +799,23 @@ elif st.session_state.super_logged_in:
     col_l, col_main, col_r = st.columns([1, 6, 1])
     with col_main:
         st.markdown("<h1>🛡️ Super Admin Control Center</h1>", unsafe_allow_html=True)
+        
+        sa_action = st.radio("Select Module:", ["📈 Real-Time Dashboard", "🔐 Provision Access", "👥 Access Directory", "🔑 Change Password"], horizontal=True)
+        st.write("---")
+        
         if st.button("🚪 Terminate Session & Logout"):
             st.session_state.super_logged_in = False
             st.rerun()
             
-        st.write("---")
-        sa_tab0, sa_tab1, sa_tab2 = st.tabs(["📈 Real-Time Dashboard", "🔐 Provision Access", "👥 Access Directory"])
-        
-        with sa_tab0: render_dashboard("Super Admin", "All")
-        with sa_tab1: render_access_control()
-        with sa_tab2:
-            st.markdown("#### System Roster")
+        if sa_action == "📈 Real-Time Dashboard": render_dashboard("Super Admin", "All")
+        elif sa_action == "🔐 Provision Access": render_access_control()
+        elif sa_action == "🔑 Change Password": render_password_change("SuperAdmin")
+        elif sa_action == "👥 Access Directory":
+            st.markdown("#### System Access Roster & Management")
             try:
                 hr_list = supabase.table("hr_users").select("id, username, role, department").execute()
                 if hr_list.data: 
-                    st.dataframe(pd.DataFrame(hr_list.data).rename(columns={"username": "Identity", "role": "Role", "department": "Scope"}), use_container_width=True)
-            except: st.error("Network error.")
+                    df_hr = pd.DataFrame(hr_list.data).rename(columns={"username": "Identity", "role": "Role", "department": "Scope"})
+                    st.dataframe(df_hr, use_container_width=True)
+                else: st.info("No active nodes on network.")
+            except: st.error("Network error retrieving users.")
