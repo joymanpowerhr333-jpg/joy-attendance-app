@@ -10,6 +10,28 @@ import os
 import io
 from streamlit_qrcode_scanner import qrcode_scanner
 
+# --- SESSION STATE INITIALIZATION (MUST BE FIRST) ---
+if "hr_logged_in" not in st.session_state: 
+    st.session_state.hr_logged_in = False
+if "hr_username" not in st.session_state: 
+    st.session_state.hr_username = ""
+if "user_role" not in st.session_state: 
+    st.session_state.user_role = ""
+if "user_dept" not in st.session_state: 
+    st.session_state.user_dept = "All"
+if "super_logged_in" not in st.session_state: 
+    st.session_state.super_logged_in = False
+if "camera_key" not in st.session_state: 
+    st.session_state.camera_key = 1
+if "last_scanned_id" not in st.session_state: 
+    st.session_state.last_scanned_id = None
+if "success_msg" not in st.session_state: 
+    st.session_state.success_msg = ""
+if "error_msg" not in st.session_state: 
+    st.session_state.error_msg = ""
+if "show_id_card" not in st.session_state: 
+    st.session_state.show_id_card = False
+
 # --- PAGE CONFIGURATION & ALIGNMENT STYLING ---
 st.set_page_config(page_title="Joy Corporate Solutions", page_icon="🏢", layout="wide")
 IST = timezone(timedelta(hours=5, minutes=30))
@@ -651,14 +673,8 @@ def render_dashboard(role, dept):
                             continue
                         
                         # Get all days in the range (excluding weekends if needed)
-                        # For this implementation, we'll count all days
                         date_range = pd.date_range(actual_start, summary_end)
                         total_days = len(date_range)
-                        
-                        # Count days that are not weekends (Mon-Fri)
-                        # If you want to exclude weekends, uncomment the following:
-                        # date_range = pd.date_range(actual_start, summary_end)
-                        # total_days = len([d for d in date_range if d.weekday() < 5])  # Mon=0, Fri=4
                         
                         # Absent days = total working days - present days - leave days
                         absent_days = total_days - present_days - leave_days
@@ -731,12 +747,6 @@ def render_dashboard(role, dept):
                         
                         # Count employees by status
                         status_counts = df_summary['Status'].value_counts()
-                        status_colors = {
-                            '🟢 Excellent': '#28a745',
-                            '🟡 Good': '#ffc107',
-                            '🟠 Needs Improvement': '#fd7e14',
-                            '🔴 Poor': '#dc3545'
-                        }
                         
                         # Create bar chart data
                         chart_data = pd.DataFrame({
@@ -749,6 +759,10 @@ def render_dashboard(role, dept):
                         st.info("No employees found in the selected date range.")
                 else:
                     st.info("No attendance data available.")
+
+# --- MAIN APP LOGIC ---
+# SESSION STATE is already initialized at the top
+
 # ==========================================
 #         STATE 1: MAIN LOGIN SCREEN
 # ==========================================
@@ -804,7 +818,8 @@ elif st.session_state.hr_logged_in:
         st.markdown(f"<p>Secure Session Active: <b>{st.session_state.hr_username}</b> | Dept: <b>{st.session_state.user_dept}</b></p>", unsafe_allow_html=True)
         
         if st.button("🚪 Terminate Session & Logout"):
-            for key in ["hr_logged_in", "hr_username", "user_role", "user_dept"]: st.session_state[key] = ""
+            for key in ["hr_logged_in", "hr_username", "user_role", "user_dept"]: 
+                st.session_state[key] = ""
             st.session_state.hr_logged_in = False
             st.rerun()
             
@@ -871,20 +886,35 @@ elif st.session_state.hr_logged_in:
                 with st.form("enrollment_form", clear_on_submit=True):
                     c1, c2 = st.columns(2)
                     with c1:
-                        emp_id, name = st.text_input("Employee ID Number*"), st.text_input("Full Name*")
+                        emp_id = st.text_input("Employee ID Number*")
+                        name = st.text_input("Full Name*")
+                        joining_date = st.date_input("Date of Joining", datetime.now(IST).date())
                     with c2:
                         dept_val = st.session_state.user_dept if st.session_state.user_role == "Dept Admin" else st.text_input("Department")
-                        mobile, shift = st.text_input("Mobile Number"), st.selectbox("Assigned Shift", dynamic_shifts)
+                        mobile = st.text_input("Mobile Number")
+                        shift = st.selectbox("Assigned Shift", dynamic_shifts)
                     
                     if st.form_submit_button("✨ Generate Profile & ID Card") and emp_id and name:
                         try:
-                            supabase.table("employees").insert({"emp_id": str(emp_id), "name": name, "department": dept_val, "mobile": mobile, "shift": shift, "status": "Active", "status_updated_on": datetime.now(IST).strftime('%d-%m-%Y')}).execute()
+                            supabase.table("employees").insert({
+                                "emp_id": str(emp_id), 
+                                "name": name, 
+                                "department": dept_val, 
+                                "mobile": mobile, 
+                                "shift": shift, 
+                                "status": "Active", 
+                                "joining_date": joining_date.strftime('%Y-%m-%d'),
+                                "status_updated_on": datetime.now(IST).strftime('%d-%m-%Y')
+                            }).execute()
                             st.success(f"🎉 Profile created for {name}!")
-                        except: st.error("⚠️ Error saving. ID might already exist.")
+                        except Exception as e:
+                            st.error(f"⚠️ Error saving: {str(e)}")
                         
             with e_tab2:
                 st.markdown("**1. Download Template & Prepare Data**")
-                st.download_button("📥 Download Sample Template", data="emp_id,name,department,mobile,shift\n1001,John Doe,Sales,9876543210,General", file_name="bulk_enroll.csv", mime="text/csv")
+                st.download_button("📥 Download Sample Template", 
+                    data="emp_id,name,department,mobile,shift,joining_date\n1001,John Doe,Sales,9876543210,General,2024-01-01", 
+                    file_name="bulk_enroll.csv", mime="text/csv")
                 st.markdown("**2. Upload File**")
                 uploaded_file = st.file_uploader("Upload Completed CSV", type=["csv"])
                 st.write("---")
@@ -893,7 +923,18 @@ elif st.session_state.hr_logged_in:
                         df_upload = pd.read_csv(uploaded_file)
                         for _, row in df_upload.iterrows():
                             d_val = st.session_state.user_dept if st.session_state.user_role == "Dept Admin" else str(row.get('department', ''))
-                            try: supabase.table("employees").insert({"emp_id": str(row['emp_id']), "name": str(row['name']), "department": d_val, "mobile": str(row.get('mobile', '')), "shift": str(row.get('shift', 'General')), "status": "Active", "status_updated_on": datetime.now(IST).strftime('%d-%m-%Y')}).execute()
+                            joining_date = row.get('joining_date', datetime.now(IST).strftime('%Y-%m-%d'))
+                            try: 
+                                supabase.table("employees").insert({
+                                    "emp_id": str(row['emp_id']), 
+                                    "name": str(row['name']), 
+                                    "department": d_val, 
+                                    "mobile": str(row.get('mobile', '')), 
+                                    "shift": str(row.get('shift', 'General')), 
+                                    "status": "Active",
+                                    "joining_date": joining_date,
+                                    "status_updated_on": datetime.now(IST).strftime('%d-%m-%Y')
+                                }).execute()
                             except: pass
                         st.success("✅ Successfully enrolled employees!")
                     except: st.error("Error reading CSV.")
@@ -1167,8 +1208,10 @@ elif st.session_state.hr_logged_in:
                 else:
                     st.info("No records available.")
 
-        elif hr_action == "⚙️ Shift Master": render_shift_master_ui()
-        elif hr_action == "🔐 Access Control": render_access_management(is_super_admin=False)
+        elif hr_action == "⚙️ Shift Master": 
+            render_shift_master_ui()
+        elif hr_action == "🔐 Access Control": 
+            render_access_management(is_super_admin=False)
 
 # ==========================================
 #         STATE 3: SUPER ADMIN DASHBOARD
@@ -1185,6 +1228,9 @@ elif st.session_state.super_logged_in:
             st.session_state.super_logged_in = False
             st.rerun()
             
-        if sa_action == "📈 Real-Time Dashboard": render_dashboard("Super Admin", "All")
-        elif sa_action == "🔐 Access Management": render_access_management(is_super_admin=True)
-        elif sa_action == "🔑 Change Password": render_password_change("SuperAdmin")
+        if sa_action == "📈 Real-Time Dashboard": 
+            render_dashboard("Super Admin", "All")
+        elif sa_action == "🔐 Access Management": 
+            render_access_management(is_super_admin=True)
+        elif sa_action == "🔑 Change Password": 
+            render_password_change("SuperAdmin")
