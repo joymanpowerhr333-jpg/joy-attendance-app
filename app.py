@@ -10,7 +10,7 @@ import os
 import io
 from streamlit_qrcode_scanner import qrcode_scanner
 
-# --- PAGE CONFIGURATION & UI STYLING ---
+# --- PAGE CONFIGURATION & PROPER ALIGNMENT STYLING ---
 st.set_page_config(page_title="Joy Corporate Solutions", page_icon="🏢", layout="wide")
 IST = timezone(timedelta(hours=5, minutes=30))
 
@@ -26,12 +26,33 @@ if os.path.exists(logo_path):
 st.markdown(watermark_css, unsafe_allow_html=True)
 st.markdown("""
     <style>
-    h1, h2, h3, h4, p, label, span, div[data-testid="stMarkdownContainer"] > p { text-align: center; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif !important; }
-    .stTabs [data-baseweb="tab-list"] { justify-content: center; } div[role="radiogroup"] { justify-content: center; } div.stButton { display: flex; justify-content: center; }
-    div.stButton > button:first-child { background: linear-gradient(145deg, #f68a28, #df7113) !important; box-shadow: 0px 4px 15px rgba(223, 113, 19, 0.4) !important; color: white !important; border-radius: 12px !important; border: none !important; padding: 12px 30px !important; font-weight: 700 !important; transition: all 0.2s ease-in-out !important; width: 100%; max-width: 300px; }
-    div.stButton > button:first-child * { color: white !important; } div.stButton > button:first-child:hover { background: linear-gradient(145deg, #df7113, #f68a28) !important; transform: translateY(-2px); }
-    .stForm, div[data-testid="stExpander"] { background: var(--secondary-background-color) !important; backdrop-filter: blur(12px) !important; border-radius: 16px !important; border: 1px solid rgba(128, 128, 128, 0.2) !important; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1) !important; padding: 25px !important; margin: 0 auto; }
-    input, select, .stTextInput > div > div > input, div[data-baseweb="select"] > div { border-radius: 8px !important; background: var(--background-color) !important; border: 1px solid rgba(128, 128, 128, 0.3) !important; text-align: center !important; color: var(--text-color) !important; -webkit-text-fill-color: var(--text-color) !important; }
+    /* PROPER TEXT ALIGNMENT: Left-aligned clean corporate typography */
+    h1, h2, h3, h4 { text-align: left !important; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif !important; color: #1a365d; }
+    p, label, span, div[data-testid="stMarkdownContainer"] > p { text-align: left !important; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif !important; }
+    
+    .stTabs [data-baseweb="tab-list"] { justify-content: flex-start; } 
+    div[role="radiogroup"] { justify-content: flex-start; } 
+    
+    div.stButton > button:first-child { 
+        background: linear-gradient(145deg, #f68a28, #df7113) !important; 
+        box-shadow: 0px 4px 15px rgba(223, 113, 19, 0.4) !important; 
+        color: white !important; border-radius: 12px !important; border: none !important; 
+        padding: 10px 24px !important; font-weight: 700 !important; transition: all 0.2s ease-in-out !important; 
+    }
+    div.stButton > button:first-child * { color: white !important; } 
+    div.stButton > button:first-child:hover { background: linear-gradient(145deg, #df7113, #f68a28) !important; transform: translateY(-2px); }
+    
+    .stForm, div[data-testid="stExpander"] { 
+        background: var(--secondary-background-color) !important; backdrop-filter: blur(12px) !important; 
+        border-radius: 16px !important; border: 1px solid rgba(128, 128, 128, 0.2) !important; 
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1) !important; padding: 25px !important; 
+    }
+    
+    input, select, .stTextInput > div > div > input, div[data-baseweb="select"] > div { 
+        border-radius: 8px !important; background: var(--background-color) !important; 
+        border: 1px solid rgba(128, 128, 128, 0.3) !important; text-align: left !important; 
+        color: var(--text-color) !important; -webkit-text-fill-color: var(--text-color) !important; 
+    }
     div[data-testid="stMetricValue"] { font-size: 1.8rem !important; color: #df7113 !important; }
     </style>
 """, unsafe_allow_html=True)
@@ -113,6 +134,51 @@ def render_password_change(username):
                     st.success("✅ Password updated successfully!")
                 else:
                     st.error("❌ Incorrect current password.")
+
+# --- ACCESS MANAGEMENT & DELETION ---
+def render_access_management():
+    st.markdown("### 🔐 Provision & Manage Department Accounts")
+    
+    tab_add, tab_del = st.tabs(["➕ Provision Access", "🗑️ Manage / Delete Accounts"])
+    
+    with tab_add:
+        with st.form("new_access_form", clear_on_submit=True):
+            col1, col2 = st.columns(2)
+            with col1:
+                new_user = st.text_input("Username")
+                new_pass = st.text_input("Password", type="password")
+            with col2:
+                new_role = st.selectbox("Assign Role", ["Dept Admin", "HR"])
+                new_dept = st.text_input("Department Name (Type 'All' for HR)", value="All" if new_role == "HR" else "")
+            if st.form_submit_button("Generate Account"):
+                if new_user and new_pass and new_dept:
+                    try:
+                        supabase.table("hr_users").insert({"username": new_user, "password": new_pass, "role": new_role, "department": new_dept}).execute()
+                        st.success(f"🎉 Account provisioned successfully for {new_user}")
+                        st.rerun()
+                    except: st.error("Error creating account. Ensure username is unique.")
+                    
+    with tab_del:
+        st.markdown("#### Existing System Users")
+        try:
+            hr_res = supabase.table("hr_users").select("id, username, role, department").execute()
+            if hr_res.data:
+                df_hr_users = pd.DataFrame(hr_res.data)
+                st.dataframe(df_hr_users.rename(columns={"id": "System ID", "username": "Username", "role": "Role", "department": "Department Scope"}), use_container_width=True)
+                
+                with st.form("delete_user_form"):
+                    user_to_delete = st.selectbox("Select Username to Delete", df_hr_users['username'].tolist())
+                    if st.form_submit_button("🗑️ Delete Selected User"):
+                        if user_to_delete == st.session_state.hr_username:
+                            st.error("❌ You cannot delete your own active login account!")
+                        else:
+                            supabase.table("hr_users").delete().eq("username", user_to_delete).execute()
+                            st.success(f"✅ User account '{user_to_delete}' has been permanently deleted.")
+                            st.rerun()
+            else:
+                st.info("No departmental user accounts found.")
+        except:
+            st.error("Error loading user directory.")
 
 # --- DASHBOARD ---
 def render_dashboard(role, dept):
@@ -254,23 +320,6 @@ def render_dashboard(role, dept):
                 st.success("🎉 Perfect Attendance Today! No absentees recorded.")
     else:
         st.info("No employee data available.")
-
-def render_access_control():
-    st.markdown("### 🔐 Provision Department Access")
-    with st.form("new_access_form", clear_on_submit=True):
-        col1, col2 = st.columns(2)
-        with col1:
-            new_user = st.text_input("Username")
-            new_pass = st.text_input("Password", type="password")
-        with col2:
-            new_role = st.selectbox("Assign Role", ["Dept Admin", "HR"])
-            new_dept = st.text_input("Department Name (Type 'All' for HR)", value="All" if new_role == "HR" else "")
-        if st.form_submit_button("Generate & Encrypt Account"):
-            if new_user and new_pass and new_dept:
-                try:
-                    supabase.table("hr_users").insert({"username": new_user, "password": new_pass, "role": new_role, "department": new_dept}).execute()
-                    st.success(f"🎉 Account provisioned successfully for {new_user}")
-                except: st.error("Error creating account.")
 
 def render_shift_master_ui():
     st.markdown("### ⚙️ Shift Master Management")
@@ -749,8 +798,6 @@ elif st.session_state.hr_logged_in:
                         if not df_raw_filtered.empty:
                             df_raw_disp = df_raw_filtered.copy()
                             df_raw_disp['Punch Time'] = pd.to_datetime(df_raw_disp['time_logged']).dt.strftime('%d-%m-%Y %I:%M:%S %p')
-                            
-                            # Merge employee name/dept for context
                             df_raw_disp = pd.merge(df_raw_disp, df_emp_all[['emp_id', 'name', 'department']], on='emp_id', how='left')
                             
                             raw_cols = ['date_only', 'emp_id', 'name', 'department', 'punch_type', 'method', 'Punch Time', 'early_leave_approved', 'remarks']
@@ -790,7 +837,7 @@ elif st.session_state.hr_logged_in:
                     st.info("No records available.")
 
         elif hr_action == "⚙️ Shift Master": render_shift_master_ui()
-        elif hr_action == "🔐 Access Control": render_access_control()
+        elif hr_action == "🔐 Access Control": render_access_management()
 
 # ==========================================
 #         STATE 3: SUPER ADMIN DASHBOARD
@@ -800,7 +847,7 @@ elif st.session_state.super_logged_in:
     with col_main:
         st.markdown("<h1>🛡️ Super Admin Control Center</h1>", unsafe_allow_html=True)
         
-        sa_action = st.radio("Select Module:", ["📈 Real-Time Dashboard", "🔐 Provision Access", "👥 Access Directory", "🔑 Change Password"], horizontal=True)
+        sa_action = st.radio("Select Module:", ["📈 Real-Time Dashboard", "🔐 Access Management", "🔑 Change Password"], horizontal=True)
         st.write("---")
         
         if st.button("🚪 Terminate Session & Logout"):
@@ -808,14 +855,5 @@ elif st.session_state.super_logged_in:
             st.rerun()
             
         if sa_action == "📈 Real-Time Dashboard": render_dashboard("Super Admin", "All")
-        elif sa_action == "🔐 Provision Access": render_access_control()
+        elif sa_action == "🔐 Access Management": render_access_management()
         elif sa_action == "🔑 Change Password": render_password_change("SuperAdmin")
-        elif sa_action == "👥 Access Directory":
-            st.markdown("#### System Access Roster & Management")
-            try:
-                hr_list = supabase.table("hr_users").select("id, username, role, department").execute()
-                if hr_list.data: 
-                    df_hr = pd.DataFrame(hr_list.data).rename(columns={"username": "Identity", "role": "Role", "department": "Scope"})
-                    st.dataframe(df_hr, use_container_width=True)
-                else: st.info("No active nodes on network.")
-            except: st.error("Network error retrieving users.")
