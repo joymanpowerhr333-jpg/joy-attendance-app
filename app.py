@@ -64,7 +64,11 @@ supabase: Client = create_client(url, key)
 def get_shift_data():
     try:
         res = supabase.table("shifts").select("*").execute()
-        return pd.DataFrame(res.data) if res.data else pd.DataFrame()
+        df = pd.DataFrame(res.data) if res.data else pd.DataFrame()
+        if not df.empty:
+            for col in ['punch_in_time', 'punch_out_time', 'break_out_time', 'break_complete_time']:
+                if col not in df.columns: df[col] = '09:00' if 'in' in col else ('18:00' if 'out' in col else '13:00')
+        return df
     except: return pd.DataFrame()
 
 def get_all_employees():
@@ -87,17 +91,25 @@ def get_all_attendance():
         if res.data:
             df = pd.DataFrame(res.data)
             df['emp_id'] = df['emp_id'].astype(str)
+            # Keep time_logged as object initially to handle timezone safely
             df["time_logged"] = pd.to_datetime(df["time_logged"]).dt.tz_convert('Asia/Kolkata')
             df["date_only"] = df["time_logged"].dt.strftime('%Y-%m-%d')
-            if "early_leave_status" not in df.columns: df["early_leave_status"] = "Pending"
-            if "remarks" not in df.columns: df["remarks"] = ""
-            if "punch_type" not in df.columns: df["punch_type"] = "Punch In"
-            df["early_leave_status"] = df["early_leave_status"].fillna("Pending")
-            df["remarks"] = df["remarks"].fillna("")
-            df["punch_type"] = df["punch_type"].fillna("Punch In")
+            
+            # Ensure required columns exist with defaults
+            defaults = {
+                "early_leave_status": "Pending",
+                "remarks": "",
+                "punch_type": "Punch In"
+            }
+            for col, default_val in defaults.items():
+                if col not in df.columns: df[col] = default_val
+                df[col] = df[col].fillna(default_val)
+                
             return df
         return pd.DataFrame()
-    except: return pd.DataFrame()
+    except Exception as e:
+        st.error(f"Error loading attendance: {e}")
+        return pd.DataFrame()
 
 def generate_id_card(emp_id, name, department, mobile):
     qr = qrcode.QRCode(box_size=10, border=4)
@@ -120,9 +132,9 @@ def generate_id_card(emp_id, name, department, mobile):
 def render_password_change(username):
     st.markdown("### 🔑 Change Account Password")
     with st.form("pwd_change_form", clear_on_submit=True):
-        old_pwd = st.text_input("Current Password", type="default")
-        new_pwd = st.text_input("New Password", type="default")
-        confirm_pwd = st.text_input("Confirm New Password", type="default")
+        old_pwd = st.text_input("Current Password", type="password") # HIDDEN
+        new_pwd = st.text_input("New Password", type="password") # HIDDEN
+        confirm_pwd = st.text_input("Confirm New Password", type="password") # HIDDEN
         if st.form_submit_button("Update Password"):
             if not old_pwd or not new_pwd:
                 st.error("⚠️ Please fill in all fields.")
@@ -150,7 +162,7 @@ def render_access_management(is_super_admin=False):
             col1, col2 = st.columns(2)
             with col1:
                 new_user = st.text_input("Username")
-                new_pass = st.text_input("Password", type="default")
+                new_pass = st.text_input("Password", type="password") # HIDDEN
             with col2:
                 new_role = st.selectbox("Assign Role", ["Dept Incharge", "HR"])
                 new_dept = st.text_input("Department Name (Type 'All' for HR)", value="All" if new_role == "HR" else "")
@@ -185,60 +197,54 @@ def render_access_management(is_super_admin=False):
             except:
                 st.error("Error loading user directory.")
 
-# --- SHIFT MASTER UI ---
-def render_shift_master_ui():
-    st.markdown("### ⚙️ Shift Master Management")
-    df_shifts = get_shift_data()
-    ALLOWED_TIMES = [f"{str(h).zfill(2)}:{m}" for h in range(24) for m in ["00", "30"]]
+# --- DASHBOARD ---
+def render_dashboard(role, dept):
+    st.markdown("### 📈 Real-Time Attendance Analytics")
+    df_emp = get_all_employees()
+    df_att = get_all_attendance()
+    df_shf = get_shift_data()
     
-    tab1, tab_bulk, tab2, tab3 = st.tabs(["➕ Add Shift", "📤 Bulk Upload", "✏️ Edit Shift", "❌ Delete Shift"])
-    
-    with tab1:
-        with st.form("add_shift_form", clear_on_submit=True):
-            col1, col2 = st.columns(2)
-            with col1:
-                new_shift = st.text_input("New Shift Name")
-                start_time = st.selectbox("Shift Start Time", ALLOWED_TIMES, index=17) # Default 08:30
-            with col2:
-                duration = st.number_input("Working Hours", min_value=1.0, max_value=24.0, value=8.0, step=0.5)
-                break_time = st.selectbox("Break Duration", [0, 30, 45, 60, 90, 120], format_func=lambda x: f"{x} Minutes")
-            if st.form_submit_button("Add Shift") and new_shift:
-                try:
-                    supabase.table("shifts").insert({"shift_name": new_shift, "start_time": start_time, "duration_hrs": duration, "break_mins": break_time}).execute()
-                    st.success(f"✅ Added {new_shift} successfully!")
-                    st.rerun()
-                except: st.error("⚠️ Shift already exists or database error.")
-                
-    with tab_bulk:
-        st.markdown("**1. Download Template & Prepare Data**")
-        st.download_button("📥 Download Shift Template", data="shift_name,start_time,duration_hrs,break_mins\nMorning A,06:00,8,30\nNight B,18:30,12,60", file_name="bulk_shifts_template.csv", mime="text/csv")
-        st.markdown("**2. Upload File**")
-        shift_upload_file = st.file_uploader("Upload Shifts CSV", type=["csv"], key="bulk_shift_uploader")
-        
-        st.write("---") 
-        if shift_upload_file and st.button("Process Bulk Shifts"):
-            try:
-                df_shf_up = pd.read_csv(shift_upload_file)
-                for _, row in df_shf_up.iterrows():
-                    try: supabase.table("shifts").insert({"shift_name": str(row['shift_name']), "start_time": str(row['start_time']).zfill(5), "duration_hrs": float(row['duration_hrs']), "break_mins": int(row['break_mins'])}).execute()
-                    except: pass 
-                st.success("✅ Successfully added shifts!")
-                st.rerun()
-            except: st.error("Error reading CSV.")
+    if df_emp.empty:
+        st.info("No employee data available to generate analytics.")
+        return
 
-    with tab2:
-        if not df_shifts.empty:
-            current_shifts = df_shifts["shift_name"].tolist()
-            with st.form("edit_shift_form"):
-                old_shift = st.selectbox("Select Shift to Edit", current_shifts)
-                col1, col2 = st.columns(2)
-                with col1:
-                    edited_shift = st.text_input("Enter New Name (Leave blank to keep same)")
-                    new_start = st.selectbox("New Start Time", ALLOWED_TIMES, index=17)
-                with col2:
-                    new_dur = st.number_input("New Working Hours", min_value=1.0, max_value=24.0, value=8.0, step=0.5)
-                    new_brk = st.selectbox("New Break Duration", [0, 30, 45, 60, 90, 120])
-                if st.form_submit_button("Update Shift"):
-                    final_name = edited_shift if edited_shift else old_shift
-                    try:
-                        supabase.table("shifts").update({"shift_name": final_name, "start_time": new_start, "duration_hrs": new_dur, "
+    if role == "Dept Incharge": df_emp = df_emp[df_emp['department'] == dept]
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        if role in ["HR", "Super Admin"]:
+            dept_set = set()
+            if not df_emp.empty: dept_set.update(df_emp['department'].dropna().unique().tolist())
+            try:
+                hr_users = supabase.table("hr_users").select("department").execute()
+                if hr_users.data:
+                    for row in hr_users.data:
+                        if row.get("department") and row["department"] != "All": dept_set.add(row["department"])
+            except: pass
+            dept_list = ["All"] + sorted(list(dept_set))
+            dash_dept = st.selectbox("Filter by Department", dept_list)
+        else:
+            dash_dept = dept
+            st.info(f"Viewing Analytics for Department: **{dept}**")
+            
+    with col2:
+        shift_list = ["All"] + (df_shf["shift_name"].tolist() if not df_shf.empty else [])
+        dash_shift = st.selectbox("Filter by Shift", shift_list)
+        
+    df_dash_emp = df_emp.copy()
+    if not df_dash_emp.empty:
+        if dash_dept != "All": df_dash_emp = df_dash_emp[df_dash_emp['department'] == dash_dept]
+        if dash_shift != "All": df_dash_emp = df_dash_emp[df_dash_emp['shift'] == dash_shift]
+        
+    active_emp_count = len(df_dash_emp[df_dash_emp['status'] == 'Active']) if not df_dash_emp.empty else 0
+    valid_emp_ids = df_dash_emp['emp_id'].tolist() if not df_dash_emp.empty else []
+    
+    df_att_dash = df_att[df_att['emp_id'].isin(valid_emp_ids)].copy() if not df_att.empty and valid_emp_ids else pd.DataFrame(columns=['emp_id', 'date_only', 'punch_type'])
+    
+    today_str = datetime.now(IST).strftime('%Y-%m-%d')
+    yesterday_str = (datetime.now(IST) - timedelta(days=1)).strftime('%Y-%m-%d')
+    
+    if not df_att_dash.empty:
+        today_att = df_att_dash[(df_att_dash['date_only'] == today_str) & (df_att_dash['punch_type'].isin(['Punch In', 'QR Code', 'Manual Entry']))]['emp_id'].nunique()
+        leave_today = df_att_dash[(df_att_dash['date_only'] == today_str) & (df_att_dash['punch_type'] == 'Leave')]['emp_id'].nunique()
+        yest_att = df_att_dash[(df_att_dash['
