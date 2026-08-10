@@ -579,11 +579,112 @@ def render_dashboard(role, dept):
             st.dataframe(shift_summary.rename(columns={'shift': 'Shift Name', 'Total_Employees': 'Total Staff', 'Present_Today': 'Present', 'Leave_Today': 'On Leave', 'Absent_Today': 'Absent'}), use_container_width=True)
 
         with d_tab3:
-            st.markdown("#### 🚨 Today's Attendance Breakdown Roster")
-            st.dataframe(df_dash_emp[['emp_id', 'name', 'department', 'shift', 'mobile', 'Today Status']].rename(
-                columns={'emp_id': 'ID', 'name': 'Name', 'department': 'Dept', 'shift': 'Shift', 'mobile': 'Phone', 'Today Status': 'Status'}
-            ), use_container_width=True)
-
+            st.markdown("#### 👤 Individual Attendance Summary")
+            
+            # Get date range for summary (last 30 days by default)
+            col_date1, col_date2 = st.columns(2)
+            with col_date1:
+                summary_start = st.date_input("Start Date", datetime.now(IST).date() - timedelta(days=30))
+            with col_date2:
+                summary_end = st.date_input("End Date", datetime.now(IST).date())
+            
+            if st.button("📊 Generate Individual Attendance Summary"):
+                if not df_att_dash.empty:
+                    # Filter attendance data by date range
+                    df_att_filtered = df_att_dash[
+                        (df_att_dash['date_only'] >= summary_start.strftime('%Y-%m-%d')) &
+                        (df_att_dash['date_only'] <= summary_end.strftime('%Y-%m-%d'))
+                    ].copy()
+                    
+                    if not df_att_filtered.empty:
+                        # Get unique dates in the range
+                        all_dates = pd.date_range(summary_start, summary_end).strftime('%Y-%m-%d').tolist()
+                        
+                        # Create summary for each employee
+                        summary_data = []
+                        
+                        for _, emp in df_dash_emp.iterrows():
+                            emp_id = emp['emp_id']
+                            emp_name = emp['name']
+                            emp_dept = emp.get('department', 'N/A')
+                            emp_shift = emp.get('shift', 'N/A')
+                            
+                            # Get attendance records for this employee
+                            emp_att = df_att_filtered[df_att_filtered['emp_id'] == emp_id]
+                            
+                            # Count present days (Punch In, QR Code, Manual Entry)
+                            present_days = emp_att[
+                                emp_att['punch_type'].isin(['Punch In', 'QR Code', 'Manual Entry'])
+                            ]['date_only'].nunique()
+                            
+                            # Count leave days
+                            leave_days = emp_att[
+                                emp_att['punch_type'] == 'Leave'
+                            ]['date_only'].nunique()
+                            
+                            # Count working days in the period (excluding weekends if needed)
+                            # For now, count all days in the range
+                            total_days = len(all_dates)
+                            
+                            # Absent days = total working days - present days - leave days
+                            # Note: This assumes all days in range are working days
+                            # You can modify to exclude weekends if needed
+                            absent_days = total_days - present_days - leave_days
+                            
+                            # Calculate attendance percentage
+                            attendance_pct = round((present_days / total_days * 100), 1) if total_days > 0 else 0
+                            
+                            summary_data.append({
+                                'ID': emp_id,
+                                'Name': emp_name,
+                                'Dept': emp_dept,
+                                'Shift': emp_shift,
+                                'Present Days': present_days,
+                                'Leave Days': leave_days,
+                                'Absent Days': max(0, absent_days),
+                                'Total Days': total_days,
+                                'Attendance %': f"{attendance_pct}%"
+                            })
+                        
+                        # Create DataFrame and sort by attendance percentage
+                        df_summary = pd.DataFrame(summary_data)
+                        df_summary = df_summary.sort_values('Attendance %', ascending=False)
+                        
+                        # Display the summary
+                        st.dataframe(df_summary, use_container_width=True)
+                        
+                        # Download button
+                        csv = df_summary.to_csv(index=False).encode('utf-8')
+                        st.download_button(
+                            "📥 Download Attendance Summary CSV",
+                            data=csv,
+                            file_name=f"Attendance_Summary_{summary_start}_to_{summary_end}.csv",
+                            mime="text/csv"
+                        )
+                        
+                        # Show some statistics
+                        st.write("---")
+                        st.markdown("#### 📊 Summary Statistics")
+                        col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
+                        
+                        total_employees = len(df_summary)
+                        avg_attendance = df_summary['Attendance %'].str.rstrip('%').astype(float).mean()
+                        best_employee = df_summary.iloc[0]['Name'] if not df_summary.empty else "N/A"
+                        worst_employee = df_summary.iloc[-1]['Name'] if not df_summary.empty else "N/A"
+                        
+                        with col_stat1:
+                            st.metric("Total Employees", total_employees)
+                        with col_stat2:
+                            st.metric("Avg Attendance %", f"{round(avg_attendance, 1)}%")
+                        with col_stat3:
+                            st.metric("Best Attendance", best_employee)
+                        with col_stat4:
+                            st.metric("Needs Improvement", worst_employee)
+                        
+                    else:
+                        st.info("No attendance records found in the selected date range.")
+                else:
+                    st.info("No attendance data available.")
 # --- SESSION STATE INITIALIZATION ---
 if "hr_logged_in" not in st.session_state: st.session_state.hr_logged_in = False
 if "hr_username" not in st.session_state: st.session_state.hr_username = ""
