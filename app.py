@@ -129,6 +129,190 @@ def generate_id_card(emp_id, name, department, mobile):
     draw.text((20, height + 110), f"Phone: {mobile}", fill="#666666", font=font_small)
     return id_card
 
+# --- EARLY LEAVE REQUEST FUNCTIONS ---
+def request_early_leave(emp_id, date_str, reason, requested_by):
+    """Request early leave approval (Dept Admin only)"""
+    try:
+        # Check if record exists
+        existing = supabase.table("attendance").select("*").eq("emp_id", emp_id).eq("date_only", date_str).execute()
+        
+        if existing.data:
+            # Update existing record with request
+            supabase.table("attendance").update({
+                "early_leave_requested": True,
+                "early_leave_approved": False,
+                "remarks": reason,
+                "requested_by": requested_by,
+                "approved_by": ""
+            }).eq("emp_id", emp_id).eq("date_only", date_str).execute()
+        else:
+            # Create new record with request
+            now_ts = datetime.combine(datetime.strptime(date_str, '%Y-%m-%d').date(), datetime.now(IST).time()).isoformat()
+            supabase.table("attendance").insert({
+                "emp_id": emp_id,
+                "method": "Request",
+                "punch_type": "Punch Out",
+                "early_leave_requested": True,
+                "early_leave_approved": False,
+                "remarks": reason,
+                "requested_by": requested_by,
+                "approved_by": "",
+                "time_logged": now_ts,
+                "date_only": date_str
+            }).execute()
+        return True, "Early leave request submitted successfully! Waiting for HR approval."
+    except Exception as e:
+        return False, f"Error submitting request: {str(e)}"
+
+def approve_early_leave(emp_id, date_str, approved, remarks, approver):
+    """Approve or reject early leave request (HR only)"""
+    try:
+        supabase.table("attendance").update({
+            "early_leave_approved": approved,
+            "remarks": remarks,
+            "approved_by": approver
+        }).eq("emp_id", emp_id).eq("date_only", date_str).execute()
+        status = "approved" if approved else "rejected"
+        return True, f"Early leave {status} successfully by {approver}!"
+    except Exception as e:
+        return False, f"Error approving request: {str(e)}"
+
+# --- SEPARATE EARLY LEAVE FUNCTIONS FOR DIFFERENT ROLES ---
+def render_dept_request_tab(df_emp_main):
+    """Department Admin - Only can request early leave"""
+    st.markdown("##### 📝 Submit Early Leave Request")
+    
+    if df_emp_main.empty:
+        st.warning("No employees found in your department.")
+        return
+    
+    with st.form("early_leave_request_form"):
+        c1, c2 = st.columns(2)
+        with c1:
+            emp_req_dict = {f"{r['name']} (ID: {r['emp_id']})": str(r['emp_id']) for _, r in df_emp_main.iterrows()}
+            req_emp = st.selectbox("Select Employee", list(emp_req_dict.keys()))
+        with c2:
+            req_date = st.date_input("Date of Early Leave", datetime.now(IST).date())
+            req_reason = st.text_area("Reason for Early Leave", placeholder="Please provide detailed reason...", height=100)
+        
+        st.info("ℹ️ Your request will be sent to HR for approval.")
+        
+        if st.form_submit_button("📤 Submit Request"):
+            if req_emp and req_reason:
+                emp_id_val = emp_req_dict[req_emp]
+                success, message = request_early_leave(
+                    emp_id_val,
+                    req_date.strftime('%Y-%m-%d'),
+                    req_reason,
+                    st.session_state.hr_username
+                )
+                if success:
+                    st.success(message)
+                    st.balloons()
+                    st.rerun()
+                else:
+                    st.error(message)
+            else:
+                st.warning("Please fill all required fields.")
+    
+    # Show pending requests for this department
+    st.markdown("---")
+    st.markdown("##### 📋 Your Pending Requests")
+    df_att_all = get_all_attendance()
+    if not df_att_all.empty:
+        dept_emp_ids = df_emp_main['emp_id'].tolist()
+        pending_reqs = df_att_all[
+            (df_att_all['emp_id'].isin(dept_emp_ids)) &
+            (df_att_all['early_leave_requested'] == True) &
+            (df_att_all['early_leave_approved'] == False)
+        ].copy()
+        
+        if not pending_reqs.empty:
+            pending_reqs = pd.merge(
+                pending_reqs,
+                df_emp_main[['emp_id', 'name', 'department']],
+                on='emp_id',
+                how='left'
+            )
+            st.dataframe(
+                pending_reqs[['emp_id', 'name', 'department', 'date_only', 'remarks']].rename(
+                    columns={'emp_id': 'ID', 'name': 'Name', 'department': 'Dept', 'date_only': 'Date', 'remarks': 'Reason'}
+                ),
+                use_container_width=True
+            )
+        else:
+            st.info("No pending requests.")
+
+def render_hr_approval_tab(df_att_all, df_emp_main):
+    """HR - Only can approve/reject early leave requests"""
+    st.markdown("##### ✅ Approve/Reject Early Leave Requests")
+    
+    if df_att_all.empty:
+        st.info("No attendance records found.")
+        return
+    
+    pending_requests = df_att_all[
+        (df_att_all['early_leave_requested'] == True) & 
+        (df_att_all['early_leave_approved'] == False)
+    ].copy()
+    
+    if pending_requests.empty:
+        st.info("No pending early leave requests.")
+        return
+    
+    # Merge with employee data
+    pending_requests = pd.merge(
+        pending_requests,
+        df_emp_main[['emp_id', 'name', 'department']],
+        on='emp_id',
+        how='left'
+    )
+    
+    st.dataframe(
+        pending_requests[['emp_id', 'name', 'department', 'date_only', 'remarks', 'requested_by']].rename(
+            columns={'emp_id': 'ID', 'name': 'Name', 'department': 'Dept', 'date_only': 'Date', 'remarks': 'Reason', 'requested_by': 'Requested By'}
+        ),
+        use_container_width=True
+    )
+    
+    st.write("---")
+    st.markdown("##### Process Request")
+    
+    with st.form("approve_early_leave_form"):
+        c1, c2 = st.columns(2)
+        with c1:
+            request_options = [
+                f"{row['name']} (ID: {row['emp_id']}) - {row['date_only']}"
+                for _, row in pending_requests.iterrows()
+            ]
+            selected_request = st.selectbox("Select Request to Process", request_options)
+        with c2:
+            approval_status = st.selectbox("Decision", ["✅ Approve", "❌ Reject"])
+            approver_remarks = st.text_area("Approver Remarks", placeholder="Add any additional notes...", height=100)
+        
+        if st.form_submit_button("Process Request"):
+            if selected_request:
+                # Extract emp_id from selection
+                emp_id_val = selected_request.split("ID: ")[1].split(")")[0]
+                date_val = selected_request.split(" - ")[1]
+                approved = approval_status == "✅ Approve"
+                
+                remarks_text = f"{approver_remarks} (Approved by: {st.session_state.hr_username})" if approver_remarks else f"Request {approval_status.lower()} by {st.session_state.hr_username}"
+                
+                success, message = approve_early_leave(
+                    emp_id_val,
+                    date_val,
+                    approved,
+                    remarks_text,
+                    st.session_state.hr_username
+                )
+                if success:
+                    st.success(message)
+                    st.balloons() if approved else None
+                    st.rerun()
+                else:
+                    st.error(message)
+
 # --- PASSWORD CHANGE MODULE ---
 def render_password_change(username):
     st.markdown("### 🔑 Change Account Password")
@@ -399,54 +583,6 @@ def render_dashboard(role, dept):
             st.dataframe(df_dash_emp[['emp_id', 'name', 'department', 'shift', 'mobile', 'Today Status']].rename(
                 columns={'emp_id': 'ID', 'name': 'Name', 'department': 'Dept', 'shift': 'Shift', 'mobile': 'Phone', 'Today Status': 'Status'}
             ), use_container_width=True)
-
-# --- EARLY LEAVE REQUEST FUNCTIONS ---
-def request_early_leave(emp_id, date_str, reason, requested_by):
-    """Request early leave approval (Dept Admin only)"""
-    try:
-        # Check if record exists
-        existing = supabase.table("attendance").select("*").eq("emp_id", emp_id).eq("date_only", date_str).execute()
-        
-        if existing.data:
-            # Update existing record with request
-            supabase.table("attendance").update({
-                "early_leave_requested": True,
-                "early_leave_approved": False,
-                "remarks": reason,
-                "requested_by": requested_by,
-                "approved_by": ""
-            }).eq("emp_id", emp_id).eq("date_only", date_str).execute()
-        else:
-            # Create new record with request
-            now_ts = datetime.combine(datetime.strptime(date_str, '%Y-%m-%d').date(), datetime.now(IST).time()).isoformat()
-            supabase.table("attendance").insert({
-                "emp_id": emp_id,
-                "method": "Request",
-                "punch_type": "Punch Out",
-                "early_leave_requested": True,
-                "early_leave_approved": False,
-                "remarks": reason,
-                "requested_by": requested_by,
-                "approved_by": "",
-                "time_logged": now_ts,
-                "date_only": date_str
-            }).execute()
-        return True, "Early leave request submitted successfully! Waiting for HR approval."
-    except Exception as e:
-        return False, f"Error submitting request: {str(e)}"
-
-def approve_early_leave(emp_id, date_str, approved, remarks, approver):
-    """Approve or reject early leave request (HR only)"""
-    try:
-        supabase.table("attendance").update({
-            "early_leave_approved": approved,
-            "remarks": remarks,
-            "approved_by": approver
-        }).eq("emp_id", emp_id).eq("date_only", date_str).execute()
-        status = "approved" if approved else "rejected"
-        return True, f"Early leave {status} successfully by {approver}!"
-    except Exception as e:
-        return False, f"Error approving request: {str(e)}"
 
 # --- SESSION STATE INITIALIZATION ---
 if "hr_logged_in" not in st.session_state: st.session_state.hr_logged_in = False
@@ -899,139 +1035,3 @@ elif st.session_state.super_logged_in:
         if sa_action == "📈 Real-Time Dashboard": render_dashboard("Super Admin", "All")
         elif sa_action == "🔐 Access Management": render_access_management(is_super_admin=True)
         elif sa_action == "🔑 Change Password": render_password_change("SuperAdmin")
-
-# --- SEPARATE EARLY LEAVE FUNCTIONS FOR DIFFERENT ROLES ---
-def render_dept_request_tab(df_emp_main):
-    """Department Admin - Only can request early leave"""
-    st.markdown("##### 📝 Submit Early Leave Request")
-    
-    if df_emp_main.empty:
-        st.warning("No employees found in your department.")
-        return
-    
-    with st.form("early_leave_request_form"):
-        c1, c2 = st.columns(2)
-        with c1:
-            emp_req_dict = {f"{r['name']} (ID: {r['emp_id']})": str(r['emp_id']) for _, r in df_emp_main.iterrows()}
-            req_emp = st.selectbox("Select Employee", list(emp_req_dict.keys()))
-        with c2:
-            req_date = st.date_input("Date of Early Leave", datetime.now(IST).date())
-            req_reason = st.text_area("Reason for Early Leave", placeholder="Please provide detailed reason...", height=100)
-        
-        st.info("ℹ️ Your request will be sent to HR for approval.")
-        
-        if st.form_submit_button("📤 Submit Request"):
-            if req_emp and req_reason:
-                emp_id_val = emp_req_dict[req_emp]
-                success, message = request_early_leave(
-                    emp_id_val,
-                    req_date.strftime('%Y-%m-%d'),
-                    req_reason,
-                    st.session_state.hr_username
-                )
-                if success:
-                    st.success(message)
-                    st.balloons()
-                    st.rerun()
-                else:
-                    st.error(message)
-            else:
-                st.warning("Please fill all required fields.")
-    
-    # Show pending requests for this department
-    st.markdown("---")
-    st.markdown("##### 📋 Your Pending Requests")
-    df_att_all = get_all_attendance()
-    if not df_att_all.empty:
-        dept_emp_ids = df_emp_main['emp_id'].tolist()
-        pending_reqs = df_att_all[
-            (df_att_all['emp_id'].isin(dept_emp_ids)) &
-            (df_att_all['early_leave_requested'] == True) &
-            (df_att_all['early_leave_approved'] == False)
-        ].copy()
-        
-        if not pending_reqs.empty:
-            pending_reqs = pd.merge(
-                pending_reqs,
-                df_emp_main[['emp_id', 'name', 'department']],
-                on='emp_id',
-                how='left'
-            )
-            st.dataframe(
-                pending_reqs[['emp_id', 'name', 'department', 'date_only', 'remarks']].rename(
-                    columns={'emp_id': 'ID', 'name': 'Name', 'department': 'Dept', 'date_only': 'Date', 'remarks': 'Reason'}
-                ),
-                use_container_width=True
-            )
-        else:
-            st.info("No pending requests.")
-
-def render_hr_approval_tab(df_att_all, df_emp_main):
-    """HR - Only can approve/reject early leave requests"""
-    st.markdown("##### ✅ Approve/Reject Early Leave Requests")
-    
-    if df_att_all.empty:
-        st.info("No attendance records found.")
-        return
-    
-    pending_requests = df_att_all[
-        (df_att_all['early_leave_requested'] == True) & 
-        (df_att_all['early_leave_approved'] == False)
-    ].copy()
-    
-    if pending_requests.empty:
-        st.info("No pending early leave requests.")
-        return
-    
-    # Merge with employee data
-    pending_requests = pd.merge(
-        pending_requests,
-        df_emp_main[['emp_id', 'name', 'department']],
-        on='emp_id',
-        how='left'
-    )
-    
-    st.dataframe(
-        pending_requests[['emp_id', 'name', 'department', 'date_only', 'remarks', 'requested_by']].rename(
-            columns={'emp_id': 'ID', 'name': 'Name', 'department': 'Dept', 'date_only': 'Date', 'remarks': 'Reason', 'requested_by': 'Requested By'}
-        ),
-        use_container_width=True
-    )
-    
-    st.write("---")
-    st.markdown("##### Process Request")
-    
-    with st.form("approve_early_leave_form"):
-        c1, c2 = st.columns(2)
-        with c1:
-            request_options = [
-                f"{row['name']} (ID: {row['emp_id']}) - {row['date_only']}"
-                for _, row in pending_requests.iterrows()
-            ]
-            selected_request = st.selectbox("Select Request to Process", request_options)
-        with c2:
-            approval_status = st.selectbox("Decision", ["✅ Approve", "❌ Reject"])
-            approver_remarks = st.text_area("Approver Remarks", placeholder="Add any additional notes...", height=100)
-        
-        if st.form_submit_button("Process Request"):
-            if selected_request:
-                # Extract emp_id from selection
-                emp_id_val = selected_request.split("ID: ")[1].split(")")[0]
-                date_val = selected_request.split(" - ")[1]
-                approved = approval_status == "✅ Approve"
-                
-                remarks_text = f"{approver_remarks} (Approved by: {st.session_state.hr_username})" if approver_remarks else f"Request {approval_status.lower()} by {st.session_state.hr_username}"
-                
-                success, message = approve_early_leave(
-                    emp_id_val,
-                    date_val,
-                    approved,
-                    remarks_text,
-                    st.session_state.hr_username
-                )
-                if success:
-                    st.success(message)
-                    st.balloons() if approved else None
-                    st.rerun()
-                else:
-                    st.error(message)
