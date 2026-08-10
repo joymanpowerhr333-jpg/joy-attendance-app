@@ -245,6 +245,4 @@ def render_dashboard(role, dept):
     yesterday_str = (datetime.now(IST) - timedelta(days=1)).strftime('%Y-%m-%d')
     
     if not df_att_dash.empty:
-        today_att = df_att_dash[(df_att_dash['date_only'] == today_str) & (df_att_dash['punch_type'].isin(['Punch In', 'QR Code', 'Manual Entry']))]['emp_id'].nunique()
-        leave_today = df_att_dash[(df_att_dash['date_only'] == today_str) & (df_att_dash['punch_type'] == 'Leave')]['emp_id'].nunique()
-        yest_att = df_att_dash[(df_att_dash['date_only'] == yesterday_str) & (df_att_dash['punch_type'].isin(['Punch In', 'QR Code', 'Manual Entry']))]['emp_id'].nunique()
+        today_att = df_att_dash[(df_att_dash['date_only'] == today_str) & (df_att_dash['punch_type
