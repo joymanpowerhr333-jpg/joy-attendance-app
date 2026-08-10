@@ -169,119 +169,341 @@ def generate_id_card(emp_id, name, department, mobile):
     draw.text((20, height + 110), f"Phone: {mobile}", fill="#666666", font=font_small)
     return id_card
 
-# --- WHATSAPP INTEGRATION FUNCTIONS ---
-def send_whatsapp_message(phone_number, message):
-    """Send WhatsApp message using WhatsApp Business API or Twilio"""
+# --- WHATSAPP BUSINESS CLOUD API INTEGRATION ---
+def send_whatsapp_message_cloud_api(phone_number, message):
+    """Send WhatsApp message using Meta's WhatsApp Cloud API"""
     try:
-        # You can use Twilio WhatsApp Business API
-        # For demo, we'll use a webhook or save to a queue
-        # This is a placeholder - replace with actual WhatsApp API integration
+        # Get credentials from secrets
+        access_token = st.secrets.get("WHATSAPP_ACCESS_TOKEN")
+        phone_number_id = st.secrets.get("WHATSAPP_PHONE_NUMBER_ID")
         
-        # Example using Twilio (uncomment and add your credentials)
-        """
-        from twilio.rest import Client
+        if not access_token or not phone_number_id:
+            return False, "WhatsApp Cloud API credentials not configured. Please add WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID to secrets."
         
-        account_sid = st.secrets["TWILIO_ACCOUNT_SID"]
-        auth_token = st.secrets["TWILIO_AUTH_TOKEN"]
-        from_number = st.secrets["TWILIO_WHATSAPP_NUMBER"]
+        # Clean phone number (remove + if present)
+        clean_number = phone_number.replace('+', '').strip()
         
-        client = Client(account_sid, auth_token)
+        # Prepare the API endpoint
+        url = f"https://graph.facebook.com/v17.0/{phone_number_id}/messages"
         
-        message = client.messages.create(
-            body=message,
-            from_=f'whatsapp:{from_number}',
-            to=f'whatsapp:{phone_number}'
-        )
-        return True, "WhatsApp message sent successfully!"
-        """
+        # Prepare headers
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json"
+        }
         
-        # For now, return success with a note
-        return True, "WhatsApp message prepared for sending. (Integration configured)"
+        # Prepare the message payload
+        # Split long messages if needed (WhatsApp has 4096 character limit)
+        if len(message) > 4000:
+            # Send as document instead
+            return send_whatsapp_document_cloud_api(phone_number, message)
         
+        payload = {
+            "messaging_product": "whatsapp",
+            "to": clean_number,
+            "type": "text",
+            "text": {
+                "preview_url": False,
+                "body": message
+            }
+        }
+        
+        # Make the API request
+        response = requests.post(url, headers=headers, json=payload)
+        
+        if response.status_code == 200 or response.status_code == 201:
+            result = response.json()
+            return True, f"WhatsApp message sent successfully! Message ID: {result.get('messages', [{}])[0].get('id', 'N/A')}"
+        else:
+            error_data = response.json()
+            error_message = error_data.get('error', {}).get('message', 'Unknown error')
+            return False, f"WhatsApp API Error: {error_message}"
+            
+    except requests.exceptions.RequestException as e:
+        return False, f"Network error: {str(e)}"
     except Exception as e:
         return False, f"Error sending WhatsApp message: {str(e)}"
 
-def format_attendance_report(df_summary, report_type="daily"):
+def send_whatsapp_document_cloud_api(phone_number, message):
+    """Send long messages as a document via WhatsApp Cloud API"""
+    try:
+        # Get credentials from secrets
+        access_token = st.secrets.get("WHATSAPP_ACCESS_TOKEN")
+        phone_number_id = st.secrets.get("WHATSAPP_PHONE_NUMBER_ID")
+        
+        if not access_token or not phone_number_id:
+            return False, "WhatsApp Cloud API credentials not configured."
+        
+        # Create a text file from the message
+        import io
+        from io import BytesIO
+        
+        # Create filename with timestamp
+        timestamp = datetime.now(IST).strftime('%Y%m%d_%H%M%S')
+        filename = f"attendance_report_{timestamp}.txt"
+        
+        # Create a BytesIO object
+        file_bytes = BytesIO()
+        file_bytes.write(message.encode('utf-8'))
+        file_bytes.seek(0)
+        
+        # Upload to a temporary location or use media upload API
+        # For simplicity, we'll send as text with proper formatting
+        
+        # If message is too long for text, send as a document
+        url = f"https://graph.facebook.com/v17.0/{phone_number_id}/messages"
+        
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json"
+        }
+        
+        # Since we can't easily upload files directly, we'll split into multiple messages
+        # or use a more sophisticated approach with media upload
+        
+        # For now, send a summary with a note about viewing in the system
+        summary_message = f"📊 *Attendance Report*\n\n"
+        summary_message += f"Report generated for {datetime.now(IST).strftime('%d-%m-%Y %H:%M')}\n"
+        summary_message += f"Full report is available in the Joy Corporate Solutions dashboard.\n"
+        summary_message += f"Report length: {len(message)} characters.\n\n"
+        summary_message += f"*Summary:*\n"
+        
+        # Extract first few lines as summary
+        lines = message.split('\n')[:15]
+        summary_message += '\n'.join(lines)
+        summary_message += f"\n\n... (truncated - view full report in dashboard)"
+        
+        # Send the summary as text
+        return send_whatsapp_message_cloud_api(phone_number, summary_message)
+        
+    except Exception as e:
+        return False, f"Error sending document: {str(e)}"
+
+def send_whatsapp_template_message_cloud_api(phone_number, template_name, template_params=None):
+    """Send a template message via WhatsApp Cloud API"""
+    try:
+        access_token = st.secrets.get("WHATSAPP_ACCESS_TOKEN")
+        phone_number_id = st.secrets.get("WHATSAPP_PHONE_NUMBER_ID")
+        
+        if not access_token or not phone_number_id:
+            return False, "WhatsApp Cloud API credentials not configured."
+        
+        clean_number = phone_number.replace('+', '').strip()
+        
+        url = f"https://graph.facebook.com/v17.0/{phone_number_id}/messages"
+        
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "messaging_product": "whatsapp",
+            "to": clean_number,
+            "type": "template",
+            "template": {
+                "name": template_name,
+                "language": {
+                    "code": "en"
+                }
+            }
+        }
+        
+        if template_params:
+            payload["template"]["components"] = [
+                {
+                    "type": "body",
+                    "parameters": [
+                        {"type": "text", "text": str(param)} for param in template_params
+                    ]
+                }
+            ]
+        
+        response = requests.post(url, headers=headers, json=payload)
+        
+        if response.status_code == 200 or response.status_code == 201:
+            return True, "WhatsApp template message sent successfully!"
+        else:
+            error_data = response.json()
+            error_message = error_data.get('error', {}).get('message', 'Unknown error')
+            return False, f"WhatsApp API Error: {error_message}"
+            
+    except Exception as e:
+        return False, f"Error sending template message: {str(e)}"
+
+def format_attendance_report_for_whatsapp(df_emp, df_att, report_type="daily", date_range=None):
     """Format attendance data for WhatsApp report"""
-    today = datetime.now(IST).strftime('%d-%m-%Y')
+    today = datetime.now(IST)
+    company_name = "JOY CORPORATE SOLUTIONS"
     
     if report_type == "daily":
-        message = f"📊 *JOY CORPORATE SOLUTIONS*\n"
-        message += f"📅 *Daily Attendance Report*\n"
-        message += f"🗓️ Date: {today}\n"
-        message += f"{'='*30}\n\n"
+        today_str = today.strftime('%Y-%m-%d')
+        date_display = today.strftime('%d-%m-%Y')
+        
+        # Get today's attendance
+        df_att_today = df_att[df_att['date_only'] == today_str]
+        
+        present_ids = df_att_today[df_att_today['punch_type'].isin(['Punch In', 'QR Code', 'Manual Entry'])]['emp_id'].unique()
+        leave_ids = df_att_today[df_att_today['punch_type'] == 'Leave']['emp_id'].unique()
+        
+        def get_status(emp_id):
+            if emp_id in present_ids: return 'Present'
+            elif emp_id in leave_ids: return 'Leave'
+            else: return 'Absent'
+        
+        df_emp['Today Status'] = df_emp['emp_id'].apply(get_status)
         
         # Summary statistics
-        total_employees = len(df_summary)
-        present = df_summary[df_summary['Today Status'] == 'Present'].shape[0] if 'Today Status' in df_summary.columns else 0
-        absent = df_summary[df_summary['Today Status'] == 'Absent'].shape[0] if 'Today Status' in df_summary.columns else 0
-        leave = df_summary[df_summary['Today Status'] == 'Leave'].shape[0] if 'Today Status' in df_summary.columns else 0
+        total_employees = len(df_emp)
+        present = df_emp[df_emp['Today Status'] == 'Present'].shape[0]
+        absent = df_emp[df_emp['Today Status'] == 'Absent'].shape[0]
+        leave = df_emp[df_emp['Today Status'] == 'Leave'].shape[0]
+        attendance_rate = round((present / total_employees) * 100 if total_employees > 0 else 0, 1)
+        
+        # Build message
+        message = f"📊 *{company_name}*\n"
+        message += f"📅 *Daily Attendance Report*\n"
+        message += f"🗓️ Date: {date_display}\n"
+        message += f"{'='*35}\n\n"
         
         message += f"📌 *Total Employees:* {total_employees}\n"
         message += f"✅ *Present:* {present}\n"
         message += f"❌ *Absent:* {absent}\n"
         message += f"🏠 *On Leave:* {leave}\n"
-        message += f"📈 *Attendance Rate:* {round((present/total_employees)*100 if total_employees > 0 else 0, 1)}%\n\n"
+        message += f"📈 *Attendance Rate:* {attendance_rate}%\n\n"
         
-        # Present employees
-        if 'Today Status' in df_summary.columns:
-            present_emps = df_summary[df_summary['Today Status'] == 'Present']
-            if not present_emps.empty:
-                message += f"✅ *Present Employees:*\n"
-                for _, emp in present_emps.iterrows():
-                    message += f"  • {emp['Name']} (ID: {emp['ID']})\n"
-                message += "\n"
-            
-            absent_emps = df_summary[df_summary['Today Status'] == 'Absent']
-            if not absent_emps.empty:
-                message += f"❌ *Absent Employees:*\n"
-                for _, emp in absent_emps.iterrows():
-                    message += f"  • {emp['Name']} (ID: {emp['ID']})\n"
-                message += "\n"
-            
-            leave_emps = df_summary[df_summary['Today Status'] == 'Leave']
-            if not leave_emps.empty:
-                message += f"🏠 *On Leave:*\n"
-                for _, emp in leave_emps.iterrows():
-                    message += f"  • {emp['Name']} (ID: {emp['ID']})\n"
+        # Department-wise breakdown
+        if 'department' in df_emp.columns:
+            message += f"🏢 *Department-wise Breakdown:*\n"
+            dept_summary = df_emp.groupby('department')['Today Status'].value_counts().unstack(fill_value=0)
+            for dept in dept_summary.index:
+                dept_total = dept_summary.loc[dept].sum()
+                dept_present = dept_summary.loc[dept].get('Present', 0)
+                dept_rate = round((dept_present / dept_total) * 100 if dept_total > 0 else 0, 1)
+                message += f"  • {dept}: {dept_present}/{dept_total} ({dept_rate}%)\n"
+            message += "\n"
         
-        message += f"\n{'-'*30}\n"
-        message += f"📱 *Report generated by Joy Corporate Solutions*"
+        # Present employees list
+        present_emps = df_emp[df_emp['Today Status'] == 'Present']
+        if not present_emps.empty:
+            message += f"✅ *Present Employees:*\n"
+            for _, emp in present_emps.iterrows():
+                name = emp.get('name', 'N/A')
+                emp_id = emp.get('emp_id', 'N/A')
+                dept = emp.get('department', 'N/A')
+                message += f"  • {name} (ID: {emp_id}) - {dept}\n"
+            message += "\n"
+        
+        # Absent employees list (first 20)
+        absent_emps = df_emp[df_emp['Today Status'] == 'Absent']
+        if not absent_emps.empty:
+            message += f"❌ *Absent Employees:*\n"
+            count = 0
+            for _, emp in absent_emps.iterrows():
+                if count >= 20:
+                    remaining = len(absent_emps) - 20
+                    message += f"  • ... and {remaining} more absent employees\n"
+                    break
+                name = emp.get('name', 'N/A')
+                emp_id = emp.get('emp_id', 'N/A')
+                dept = emp.get('department', 'N/A')
+                message += f"  • {name} (ID: {emp_id}) - {dept}\n"
+                count += 1
+            message += "\n"
+        
+        # On leave list
+        leave_emps = df_emp[df_emp['Today Status'] == 'Leave']
+        if not leave_emps.empty:
+            message += f"🏠 *On Leave:*\n"
+            for _, emp in leave_emps.iterrows():
+                name = emp.get('name', 'N/A')
+                emp_id = emp.get('emp_id', 'N/A')
+                message += f"  • {name} (ID: {emp_id})\n"
+        
+        message += f"\n{'-'*35}\n"
+        message += f"📱 *Generated by Joy Corporate Solutions*\n"
+        message += f"⏰ {today.strftime('%I:%M %p')} | {today.strftime('%d-%m-%Y')}"
         
     elif report_type == "monthly":
-        month = datetime.now(IST).strftime('%B %Y')
-        message = f"📊 *JOY CORPORATE SOLUTIONS*\n"
-        message += f"📅 *Monthly Attendance Summary*\n"
-        message += f"🗓️ Month: {month}\n"
-        message += f"{'='*30}\n\n"
+        if date_range:
+            start_date, end_date = date_range
+            date_display = f"{start_date.strftime('%d-%m-%Y')} to {end_date.strftime('%d-%m-%Y')}"
+        else:
+            # Current month
+            start_date = today.replace(day=1)
+            end_date = today
+            date_display = start_date.strftime('%B %Y')
         
-        # Summary statistics
+        # Filter attendance for the period
+        df_att_period = df_att[
+            (df_att['date_only'] >= start_date.strftime('%Y-%m-%d')) &
+            (df_att['date_only'] <= end_date.strftime('%Y-%m-%d'))
+        ]
+        
+        # Calculate monthly stats
+        total_days = (end_date - start_date).days + 1
+        summary_data = []
+        
+        for _, emp in df_emp.iterrows():
+            emp_att = df_att_period[df_att_period['emp_id'] == emp['emp_id']]
+            present_days = emp_att[emp_att['punch_type'].isin(['Punch In', 'QR Code', 'Manual Entry'])]['date_only'].nunique()
+            
+            # Calculate attendance percentage
+            attendance_pct = round((present_days / total_days * 100), 1) if total_days > 0 else 0
+            
+            summary_data.append({
+                'ID': emp['emp_id'],
+                'Name': emp.get('name', 'N/A'),
+                'Department': emp.get('department', 'N/A'),
+                'Present Days': present_days,
+                'Total Days': total_days,
+                'Attendance %': attendance_pct
+            })
+        
+        df_summary = pd.DataFrame(summary_data)
+        
+        # Build message
+        message = f"📊 *{company_name}*\n"
+        message += f"📅 *Monthly Attendance Summary*\n"
+        message += f"🗓️ {date_display}\n"
+        message += f"{'='*35}\n\n"
+        
+        # Overall statistics
         total_employees = len(df_summary)
-        avg_attendance = df_summary['Attendance %'].mean() if 'Attendance %' in df_summary.columns else 0
+        avg_attendance = df_summary['Attendance %'].mean()
         
         message += f"📌 *Total Employees:* {total_employees}\n"
-        message += f"📈 *Average Attendance:* {round(avg_attendance, 1)}%\n\n"
+        message += f"📈 *Average Attendance:* {round(avg_attendance, 1)}%\n"
+        message += f"📅 *Working Days:* {total_days}\n\n"
         
         # Top performers
-        if not df_summary.empty and 'Attendance %' in df_summary.columns:
-            top_5 = df_summary.nlargest(5, 'Attendance %')
-            message += f"🏆 *Top Performers:*\n"
-            for _, emp in top_5.iterrows():
-                message += f"  • {emp['Name']} - {emp['Attendance %']}%\n"
-            message += "\n"
-            
-            # Bottom performers
-            bottom_5 = df_summary.nsmallest(5, 'Attendance %')
-            message += f"⚠️ *Needs Improvement:*\n"
-            for _, emp in bottom_5.iterrows():
-                message += f"  • {emp['Name']} - {emp['Attendance %']}%\n"
+        top_5 = df_summary.nlargest(5, 'Attendance %')
+        message += f"🏆 *Top Performers:*\n"
+        for _, emp in top_5.iterrows():
+            message += f"  • {emp['Name']} - {emp['Attendance %']}% ({emp['Present Days']}/{total_days} days)\n"
+        message += "\n"
         
-        message += f"\n{'-'*30}\n"
-        message += f"📱 *Report generated by Joy Corporate Solutions*"
+        # Bottom performers
+        bottom_5 = df_summary.nsmallest(5, 'Attendance %')
+        message += f"⚠️ *Needs Improvement:*\n"
+        for _, emp in bottom_5.iterrows():
+            message += f"  • {emp['Name']} - {emp['Attendance %']}% ({emp['Present Days']}/{total_days} days)\n"
+        message += "\n"
+        
+        # Department-wise summary
+        if 'Department' in df_summary.columns:
+            message += f"🏢 *Department-wise Attendance:*\n"
+            dept_summary = df_summary.groupby('Department')['Attendance %'].mean().sort_values(ascending=False)
+            for dept, avg in dept_summary.items():
+                message += f"  • {dept}: {round(avg, 1)}%\n"
+        
+        message += f"\n{'-'*35}\n"
+        message += f"📱 *Generated by Joy Corporate Solutions*\n"
+        message += f"⏰ {today.strftime('%I:%M %p')} | {today.strftime('%d-%m-%Y')}"
     
     return message
 
-def send_whatsapp_report(phone_number, report_type="daily"):
+def send_whatsapp_report(phone_number, report_type="daily", date_range=None):
     """Generate and send attendance report via WhatsApp"""
     try:
         # Get data
@@ -291,53 +513,16 @@ def send_whatsapp_report(phone_number, report_type="daily"):
         if df_emp.empty:
             return False, "No employee data available"
         
-        # Prepare summary
-        today_str = datetime.now(IST).strftime('%Y-%m-%d')
-        
+        # Format report
         if report_type == "daily":
-            # Get today's attendance
-            df_att_today = df_att[df_att['date_only'] == today_str]
-            
-            present_ids = df_att_today[df_att_today['punch_type'].isin(['Punch In', 'QR Code', 'Manual Entry'])]['emp_id'].unique()
-            leave_ids = df_att_today[df_att_today['punch_type'] == 'Leave']['emp_id'].unique()
-            
-            def get_status(emp_id):
-                if emp_id in present_ids: return 'Present'
-                elif emp_id in leave_ids: return 'Leave'
-                else: return 'Absent'
-            
-            df_emp['Today Status'] = df_emp['emp_id'].apply(get_status)
-            
-            message = format_attendance_report(df_emp, "daily")
-            
+            message = format_attendance_report_for_whatsapp(df_emp, df_att, "daily")
         elif report_type == "monthly":
-            # Get monthly summary
-            today = datetime.now(IST).date()
-            first_day = today.replace(day=1)
-            
-            df_att_month = df_att[
-                (df_att['date_only'] >= first_day.strftime('%Y-%m-%d')) &
-                (df_att['date_only'] <= today.strftime('%Y-%m-%d'))
-            ]
-            
-            summary_data = []
-            for _, emp in df_emp.iterrows():
-                emp_att = df_att_month[df_att_month['emp_id'] == emp['emp_id']]
-                present_days = emp_att[emp_att['punch_type'].isin(['Punch In', 'QR Code', 'Manual Entry'])]['date_only'].nunique()
-                total_days = (today - first_day).days + 1
-                attendance_pct = round((present_days / total_days * 100), 1) if total_days > 0 else 0
-                
-                summary_data.append({
-                    'ID': emp['emp_id'],
-                    'Name': emp['name'],
-                    'Attendance %': attendance_pct
-                })
-            
-            df_summary = pd.DataFrame(summary_data)
-            message = format_attendance_report(df_summary, "monthly")
+            message = format_attendance_report_for_whatsapp(df_emp, df_att, "monthly", date_range)
+        else:
+            return False, "Invalid report type"
         
-        # Send WhatsApp message
-        success, result = send_whatsapp_message(phone_number, message)
+        # Send via WhatsApp Cloud API
+        success, result = send_whatsapp_message_cloud_api(phone_number, message)
         
         if success:
             return True, f"WhatsApp report sent successfully to {phone_number}"
@@ -766,22 +951,65 @@ def render_dashboard(role, dept):
     
     # --- WHATSAPP REPORT SECTION ---
     st.markdown("### 📱 WhatsApp Report Integration")
-    st.markdown("Send attendance reports directly via WhatsApp")
+    st.markdown("Send attendance reports directly via WhatsApp Business Cloud API")
+    
+    with st.expander("📋 WhatsApp Cloud API Configuration", expanded=False):
+        st.info("""
+        **WhatsApp Cloud API Setup:**
+        1. Create a Meta Developer account
+        2. Set up a WhatsApp Business App
+        3. Get your Access Token and Phone Number ID
+        4. Add to Streamlit secrets:
+           - `WHATSAPP_ACCESS_TOKEN`
+           - `WHATSAPP_PHONE_NUMBER_ID`
+        """)
+        
+        if st.button("🔧 Test WhatsApp Connection"):
+            try:
+                access_token = st.secrets.get("WHATSAPP_ACCESS_TOKEN")
+                phone_number_id = st.secrets.get("WHATSAPP_PHONE_NUMBER_ID")
+                if access_token and phone_number_id:
+                    st.success("✅ WhatsApp Cloud API credentials found!")
+                    st.info(f"Phone Number ID: {phone_number_id[:10]}...")
+                else:
+                    st.error("❌ WhatsApp Cloud API credentials not configured in secrets")
+                    st.info("Please add WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID to your .streamlit/secrets.toml file")
+            except:
+                st.error("❌ Error accessing secrets. Please configure WhatsApp Cloud API credentials.")
     
     whatsapp_col1, whatsapp_col2, whatsapp_col3 = st.columns([1, 1, 1])
     with whatsapp_col1:
         whatsapp_phone = st.text_input("📞 WhatsApp Number (with country code)", 
                                       placeholder="+91XXXXXXXXXX",
-                                      help="Enter phone number in international format")
+                                      help="Enter phone number in international format (e.g., +91 for India)")
     with whatsapp_col2:
-        report_type_whatsapp = st.selectbox("📊 Report Type", ["Daily Report", "Monthly Report"])
+        report_type_whatsapp = st.selectbox("📊 Report Type", ["Daily Report", "Monthly Report", "Custom Date Range"])
     
     with whatsapp_col3:
+        # Date range for custom report
+        if report_type_whatsapp == "Custom Date Range":
+            st.write("📅 Date Range")
+            col_date1, col_date2 = st.columns(2)
+            with col_date1:
+                custom_start = st.date_input("Start", datetime.now(IST).date() - timedelta(days=30))
+            with col_date2:
+                custom_end = st.date_input("End", datetime.now(IST).date())
+    
+    whatsapp_col4, whatsapp_col5, whatsapp_col6 = st.columns([1, 1, 1])
+    with whatsapp_col4:
         if st.button("📤 Send Report via WhatsApp", use_container_width=True):
             if whatsapp_phone:
                 with st.spinner("Generating and sending report..."):
-                    report_type = "daily" if report_type_whatsapp == "Daily Report" else "monthly"
-                    success, message = send_whatsapp_report(whatsapp_phone, report_type)
+                    if report_type_whatsapp == "Daily Report":
+                        success, message = send_whatsapp_report(whatsapp_phone, "daily")
+                    elif report_type_whatsapp == "Monthly Report":
+                        success, message = send_whatsapp_report(whatsapp_phone, "monthly")
+                    else:  # Custom Date Range
+                        if 'custom_start' in locals() and 'custom_end' in locals():
+                            success, message = send_whatsapp_report(whatsapp_phone, "monthly", (custom_start, custom_end))
+                        else:
+                            success, message = False, "Please select date range"
+                    
                     if success:
                         st.success(message)
                         st.balloons()
