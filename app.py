@@ -581,14 +581,29 @@ def render_dashboard(role, dept):
         with d_tab3:
             st.markdown("#### 👤 Individual Attendance Summary")
             
-            # Get date range for summary (last 30 days by default)
-            col_date1, col_date2 = st.columns(2)
-            with col_date1:
-                summary_start = st.date_input("Start Date", datetime.now(IST).date() - timedelta(days=30))
-            with col_date2:
-                summary_end = st.date_input("End Date", datetime.now(IST).date())
+            # Date range selection with default "Current Month"
+            today = datetime.now(IST).date()
+            first_day_of_month = today.replace(day=1)
             
-            if st.button("📊 Generate Individual Attendance Summary"):
+            date_option = st.radio(
+                "Select Date Range:",
+                ["Current Month", "Custom Range"],
+                horizontal=True,
+                key="date_range_option"
+            )
+            
+            if date_option == "Current Month":
+                summary_start = first_day_of_month
+                summary_end = today
+                st.info(f"📅 Showing attendance for {first_day_of_month.strftime('%B %Y')} (Current Month)")
+            else:
+                col_date1, col_date2 = st.columns(2)
+                with col_date1:
+                    summary_start = st.date_input("Start Date", first_day_of_month)
+                with col_date2:
+                    summary_end = st.date_input("End Date", today)
+            
+            if st.button("📊 Generate Individual Attendance Summary", use_container_width=True):
                 if not df_att_dash.empty:
                     # Filter attendance data by date range
                     df_att_filtered = df_att_dash[
@@ -596,69 +611,98 @@ def render_dashboard(role, dept):
                         (df_att_dash['date_only'] <= summary_end.strftime('%Y-%m-%d'))
                     ].copy()
                     
-                    if not df_att_filtered.empty:
-                        # Get unique dates in the range
-                        all_dates = pd.date_range(summary_start, summary_end).strftime('%Y-%m-%d').tolist()
+                    # Create summary for each employee
+                    summary_data = []
+                    
+                    for _, emp in df_dash_emp.iterrows():
+                        emp_id = emp['emp_id']
+                        emp_name = emp['name']
+                        emp_dept = emp.get('department', 'N/A')
+                        emp_shift = emp.get('shift', 'N/A')
+                        emp_joining_date = emp.get('joining_date', None)
                         
-                        # Create summary for each employee
-                        summary_data = []
+                        # Get attendance records for this employee
+                        emp_att = df_att_filtered[df_att_filtered['emp_id'] == emp_id]
                         
-                        for _, emp in df_dash_emp.iterrows():
-                            emp_id = emp['emp_id']
-                            emp_name = emp['name']
-                            emp_dept = emp.get('department', 'N/A')
-                            emp_shift = emp.get('shift', 'N/A')
-                            
-                            # Get attendance records for this employee
-                            emp_att = df_att_filtered[df_att_filtered['emp_id'] == emp_id]
-                            
-                            # Count present days (Punch In, QR Code, Manual Entry)
-                            present_days = emp_att[
-                                emp_att['punch_type'].isin(['Punch In', 'QR Code', 'Manual Entry'])
-                            ]['date_only'].nunique()
-                            
-                            # Count leave days
-                            leave_days = emp_att[
-                                emp_att['punch_type'] == 'Leave'
-                            ]['date_only'].nunique()
-                            
-                            # Count working days in the period (excluding weekends if needed)
-                            # For now, count all days in the range
-                            total_days = len(all_dates)
-                            
-                            # Absent days = total working days - present days - leave days
-                            # Note: This assumes all days in range are working days
-                            # You can modify to exclude weekends if needed
-                            absent_days = total_days - present_days - leave_days
-                            
-                            # Calculate attendance percentage
-                            attendance_pct = round((present_days / total_days * 100), 1) if total_days > 0 else 0
-                            
-                            summary_data.append({
-                                'ID': emp_id,
-                                'Name': emp_name,
-                                'Dept': emp_dept,
-                                'Shift': emp_shift,
-                                'Present Days': present_days,
-                                'Leave Days': leave_days,
-                                'Absent Days': max(0, absent_days),
-                                'Total Days': total_days,
-                                'Attendance %': f"{attendance_pct}%"
-                            })
+                        # Count present days (Punch In, QR Code, Manual Entry)
+                        present_days = emp_att[
+                            emp_att['punch_type'].isin(['Punch In', 'QR Code', 'Manual Entry'])
+                        ]['date_only'].nunique()
                         
+                        # Count leave days
+                        leave_days = emp_att[
+                            emp_att['punch_type'] == 'Leave'
+                        ]['date_only'].nunique()
+                        
+                        # Calculate working days based on employee's joining date
+                        if emp_joining_date:
+                            try:
+                                joining_date = pd.to_datetime(emp_joining_date).date()
+                            except:
+                                joining_date = summary_start
+                        else:
+                            joining_date = summary_start
+                        
+                        # Determine the actual start date for this employee
+                        actual_start = max(joining_date, summary_start)
+                        
+                        # If employee joined after end date, skip
+                        if actual_start > summary_end:
+                            continue
+                        
+                        # Get all days in the range (excluding weekends if needed)
+                        # For this implementation, we'll count all days
+                        date_range = pd.date_range(actual_start, summary_end)
+                        total_days = len(date_range)
+                        
+                        # Count days that are not weekends (Mon-Fri)
+                        # If you want to exclude weekends, uncomment the following:
+                        # date_range = pd.date_range(actual_start, summary_end)
+                        # total_days = len([d for d in date_range if d.weekday() < 5])  # Mon=0, Fri=4
+                        
+                        # Absent days = total working days - present days - leave days
+                        absent_days = total_days - present_days - leave_days
+                        
+                        # Calculate attendance percentage
+                        attendance_pct = round((present_days / total_days * 100), 1) if total_days > 0 else 0
+                        
+                        # Determine status based on attendance percentage
+                        if attendance_pct >= 90:
+                            status = "🟢 Excellent"
+                        elif attendance_pct >= 75:
+                            status = "🟡 Good"
+                        elif attendance_pct >= 50:
+                            status = "🟠 Needs Improvement"
+                        else:
+                            status = "🔴 Poor"
+                        
+                        summary_data.append({
+                            'ID': emp_id,
+                            'Name': emp_name,
+                            'Dept': emp_dept,
+                            'Shift': emp_shift,
+                            'Present Days': present_days,
+                            'Leave Days': leave_days,
+                            'Absent Days': max(0, absent_days),
+                            'Total Days': total_days,
+                            'Attendance %': attendance_pct,
+                            'Status': status
+                        })
+                    
+                    if summary_data:
                         # Create DataFrame and sort by attendance percentage
                         df_summary = pd.DataFrame(summary_data)
                         df_summary = df_summary.sort_values('Attendance %', ascending=False)
                         
                         # Display the summary
-                        st.dataframe(df_summary, use_container_width=True)
+                        st.dataframe(df_summary, use_container_width=True, hide_index=True)
                         
                         # Download button
                         csv = df_summary.to_csv(index=False).encode('utf-8')
                         st.download_button(
                             "📥 Download Attendance Summary CSV",
                             data=csv,
-                            file_name=f"Attendance_Summary_{summary_start}_to_{summary_end}.csv",
+                            file_name=f"Attendance_Summary_{summary_start.strftime('%Y%m%d')}_to_{summary_end.strftime('%Y%m%d')}.csv",
                             mime="text/csv"
                         )
                         
@@ -668,7 +712,7 @@ def render_dashboard(role, dept):
                         col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
                         
                         total_employees = len(df_summary)
-                        avg_attendance = df_summary['Attendance %'].str.rstrip('%').astype(float).mean()
+                        avg_attendance = df_summary['Attendance %'].mean()
                         best_employee = df_summary.iloc[0]['Name'] if not df_summary.empty else "N/A"
                         worst_employee = df_summary.iloc[-1]['Name'] if not df_summary.empty else "N/A"
                         
@@ -677,26 +721,34 @@ def render_dashboard(role, dept):
                         with col_stat2:
                             st.metric("Avg Attendance %", f"{round(avg_attendance, 1)}%")
                         with col_stat3:
-                            st.metric("Best Attendance", best_employee)
+                            st.metric("Best Performance", best_employee)
                         with col_stat4:
                             st.metric("Needs Improvement", worst_employee)
                         
+                        # Show distribution chart
+                        st.write("---")
+                        st.markdown("#### 📊 Attendance Distribution")
+                        
+                        # Count employees by status
+                        status_counts = df_summary['Status'].value_counts()
+                        status_colors = {
+                            '🟢 Excellent': '#28a745',
+                            '🟡 Good': '#ffc107',
+                            '🟠 Needs Improvement': '#fd7e14',
+                            '🔴 Poor': '#dc3545'
+                        }
+                        
+                        # Create bar chart data
+                        chart_data = pd.DataFrame({
+                            'Status': status_counts.index,
+                            'Count': status_counts.values
+                        })
+                        
+                        st.bar_chart(chart_data.set_index('Status'))
                     else:
-                        st.info("No attendance records found in the selected date range.")
+                        st.info("No employees found in the selected date range.")
                 else:
                     st.info("No attendance data available.")
-# --- SESSION STATE INITIALIZATION ---
-if "hr_logged_in" not in st.session_state: st.session_state.hr_logged_in = False
-if "hr_username" not in st.session_state: st.session_state.hr_username = ""
-if "user_role" not in st.session_state: st.session_state.user_role = ""
-if "user_dept" not in st.session_state: st.session_state.user_dept = "All"
-if "super_logged_in" not in st.session_state: st.session_state.super_logged_in = False
-if "camera_key" not in st.session_state: st.session_state.camera_key = 1
-if "last_scanned_id" not in st.session_state: st.session_state.last_scanned_id = None
-if "success_msg" not in st.session_state: st.session_state.success_msg = ""
-if "error_msg" not in st.session_state: st.session_state.error_msg = ""
-if "show_id_card" not in st.session_state: st.session_state.show_id_card = False
-
 # ==========================================
 #         STATE 1: MAIN LOGIN SCREEN
 # ==========================================
