@@ -230,4 +230,15 @@ def render_shift_master_ui():
         if not df_shifts.empty:
             current_shifts = df_shifts["shift_name"].tolist()
             with st.form("edit_shift_form"):
-                old
+                old_shift = st.selectbox("Select Shift to Edit", current_shifts)
+                col1, col2 = st.columns(2)
+                with col1:
+                    edited_shift = st.text_input("Enter New Name (Leave blank to keep same)")
+                    new_start = st.selectbox("New Start Time", ALLOWED_TIMES, index=17)
+                with col2:
+                    new_dur = st.number_input("New Working Hours", min_value=1.0, max_value=24.0, value=8.0, step=0.5)
+                    new_brk = st.selectbox("New Break Duration", [0, 30, 45, 60, 90, 120])
+                if st.form_submit_button("Update Shift"):
+                    final_name = edited_shift if edited_shift else old_shift
+                    try:
+                        supabase.table("shifts").update({"shift_name": final_name, "start_time": new_start, "duration_hrs": new_dur, "
