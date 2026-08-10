@@ -120,9 +120,9 @@ def generate_id_card(emp_id, name, department, mobile):
 def render_password_change(username):
     st.markdown("### 🔑 Change Account Password")
     with st.form("pwd_change_form", clear_on_submit=True):
-        old_pwd = st.text_input("Current Password", type="password")
-        new_pwd = st.text_input("New Password", type="password")
-        confirm_pwd = st.text_input("Confirm New Password", type="password")
+        old_pwd = st.text_input("Current Password", type="default") # Standard field to prevent icon artifacts
+        new_pwd = st.text_input("New Password", type="default")
+        confirm_pwd = st.text_input("Confirm New Password", type="default")
         if st.form_submit_button("Update Password"):
             if not old_pwd or not new_pwd:
                 st.error("⚠️ Please fill in all fields.")
@@ -136,17 +136,21 @@ def render_password_change(username):
                 else:
                     st.error("❌ Incorrect current password.")
 
-# --- ACCESS MANAGEMENT & DELETION ---
-def render_access_management():
-    st.markdown("### 🔐 Provision & Manage Department Accounts")
-    tab_add, tab_del = st.tabs(["➕ Provision Access", "🗑️ Manage / Delete Accounts"])
+# --- ACCESS MANAGEMENT (SUPER ADMIN ONLY DELETE) ---
+def render_access_management(is_super_admin=False):
+    st.markdown("### 🔐 Provision Department Accounts")
+    if is_super_admin:
+        tab_add, tab_del = st.tabs(["➕ Provision Access", "🗑️ Manage / Delete Accounts"])
+    else:
+        tab_add = st.container()
+        tab_del = None
     
-    with tab_add:
+    with (tab_add if not is_super_admin else tab_add):
         with st.form("new_access_form", clear_on_submit=True):
             col1, col2 = st.columns(2)
             with col1:
                 new_user = st.text_input("Username")
-                new_pass = st.text_input("Password", type="password")
+                new_pass = st.text_input("Password", type="default")
             with col2:
                 new_role = st.selectbox("Assign Role", ["Dept Admin", "HR"])
                 new_dept = st.text_input("Department Name (Type 'All' for HR)", value="All" if new_role == "HR" else "")
@@ -158,29 +162,110 @@ def render_access_management():
                         st.rerun()
                     except: st.error("Error creating account. Ensure username is unique.")
                     
-    with tab_del:
-        st.markdown("#### Existing System Users")
-        try:
-            hr_res = supabase.table("hr_users").select("id, username, role, department").execute()
-            if hr_res.data:
-                df_hr_users = pd.DataFrame(hr_res.data)
-                st.dataframe(df_hr_users.rename(columns={"id": "System ID", "username": "Username", "role": "Role", "department": "Department Scope"}), use_container_width=True)
-                
-                with st.form("delete_user_form"):
-                    user_to_delete = st.selectbox("Select Username to Delete", df_hr_users['username'].tolist())
-                    if st.form_submit_button("🗑️ Delete Selected User"):
-                        if user_to_delete == st.session_state.hr_username:
-                            st.error("❌ You cannot delete your own active login account!")
-                        else:
-                            supabase.table("hr_users").delete().eq("username", user_to_delete).execute()
-                            st.success(f"✅ User account '{user_to_delete}' has been permanently deleted.")
-                            st.rerun()
-            else:
-                st.info("No departmental user accounts found.")
-        except:
-            st.error("Error loading user directory.")
+    if is_super_admin and tab_del:
+        with tab_del:
+            st.markdown("#### Existing System Users")
+            try:
+                hr_res = supabase.table("hr_users").select("id, username, role, department").execute()
+                if hr_res.data:
+                    df_hr_users = pd.DataFrame(hr_res.data)
+                    st.dataframe(df_hr_users.rename(columns={"id": "System ID", "username": "Username", "role": "Role", "department": "Department Scope"}), use_container_width=True)
+                    
+                    with st.form("delete_user_form"):
+                        user_to_delete = st.selectbox("Select Username to Delete", df_hr_users['username'].tolist())
+                        if st.form_submit_button("🗑️ Delete Selected User"):
+                            if user_to_delete == "SuperAdmin":
+                                st.error("❌ You cannot delete the Master Super Admin account!")
+                            else:
+                                supabase.table("hr_users").delete().eq("username", user_to_delete).execute()
+                                st.success(f"✅ User account '{user_to_delete}' has been permanently deleted.")
+                                st.rerun()
+                else:
+                    st.info("No departmental user accounts found.")
+            except:
+                st.error("Error loading user directory.")
 
-# --- DASHBOARD WITH SEPARATE LEAVE & ABSENT METRICS ---
+# --- SHIFT MASTER UI ---
+def render_shift_master_ui():
+    st.markdown("### ⚙️ Shift Master Management")
+    df_shifts = get_shift_data()
+    ALLOWED_TIMES = [f"{str(h).zfill(2)}:{m}" for h in range(24) for m in ["00", "30"]]
+    
+    tab1, tab_bulk, tab2, tab3 = st.tabs(["➕ Add Shift", "📤 Bulk Upload", "✏️ Edit Shift", "❌ Delete Shift"])
+    
+    with tab1:
+        with st.form("add_shift_form", clear_on_submit=True):
+            col1, col2 = st.columns(2)
+            with col1:
+                new_shift = st.text_input("New Shift Name")
+                start_time = st.selectbox("Shift Start Time", ALLOWED_TIMES, index=17) 
+            with col2:
+                duration = st.number_input("Working Hours", min_value=1.0, max_value=24.0, value=8.0, step=0.5)
+                break_time = st.selectbox("Break Duration", [0, 30, 45, 60, 90, 120], format_func=lambda x: f"{x} Minutes")
+            if st.form_submit_button("Add Shift") and new_shift:
+                try:
+                    supabase.table("shifts").insert({"shift_name": new_shift, "start_time": start_time, "duration_hrs": duration, "break_mins": break_time}).execute()
+                    st.success(f"✅ Added {new_shift} successfully!")
+                    st.rerun()
+                except: st.error("⚠️ Shift already exists or database error.")
+                
+    with tab_bulk:
+        st.markdown("**1. Download Template & Prepare Data**")
+        st.download_button("📥 Download Shift Template", data="shift_name,start_time,duration_hrs,break_mins\nMorning A,06:00,8,30\nNight B,18:30,12,60", file_name="bulk_shifts_template.csv", mime="text/csv")
+        st.markdown("**2. Upload File**")
+        shift_upload_file = st.file_uploader("Upload Shifts CSV", type=["csv"], key="bulk_shift_uploader")
+        
+        st.write("---") 
+        if shift_upload_file and st.button("Process Bulk Shifts"):
+            try:
+                df_shf_up = pd.read_csv(shift_upload_file)
+                for _, row in df_shf_up.iterrows():
+                    try: supabase.table("shifts").insert({"shift_name": str(row['shift_name']), "start_time": str(row['start_time']).zfill(5), "duration_hrs": float(row['duration_hrs']), "break_mins": int(row['break_mins'])}).execute()
+                    except: pass 
+                st.success("✅ Successfully added shifts!")
+                st.rerun()
+            except: st.error("Error reading CSV.")
+
+    with tab2:
+        if not df_shifts.empty:
+            current_shifts = df_shifts["shift_name"].tolist()
+            with st.form("edit_shift_form"):
+                old_shift = st.selectbox("Select Shift to Edit", current_shifts)
+                col1, col2 = st.columns(2)
+                with col1:
+                    edited_shift = st.text_input("Enter New Name (Leave blank to keep same)")
+                    new_start = st.selectbox("New Start Time", ALLOWED_TIMES, index=17)
+                with col2:
+                    new_dur = st.number_input("New Working Hours", min_value=1.0, max_value=24.0, value=8.0, step=0.5)
+                    new_brk = st.selectbox("New Break Duration", [0, 30, 45, 60, 90, 120])
+                if st.form_submit_button("Update Shift"):
+                    final_name = edited_shift if edited_shift else old_shift
+                    try:
+                        supabase.table("shifts").update({"shift_name": final_name, "start_time": new_start, "duration_hrs": new_dur, "break_mins": new_brk}).eq("shift_name", old_shift).execute()
+                        if edited_shift: supabase.table("employees").update({"shift": final_name}).eq("shift", old_shift).execute()
+                        st.success(f"✅ Shift updated successfully!")
+                        st.rerun()
+                    except: st.error("⚠️ Error updating shift.")
+
+    with tab3:
+        if not df_shifts.empty:
+            current_shifts = df_shifts["shift_name"].tolist()
+            with st.form("delete_shift_form"):
+                del_shift = st.selectbox("Select Shift to Remove", current_shifts)
+                if st.form_submit_button("Delete Shift"):
+                    try:
+                        supabase.table("shifts").delete().eq("shift_name", del_shift).execute()
+                        st.success(f"✅ Deleted {del_shift}!")
+                        st.rerun()
+                    except: st.error("⚠️ Error deleting shift.")
+                    
+    st.write("---") 
+    st.markdown("#### Current Active Shifts Database")
+    if not df_shifts.empty:
+        st.dataframe(df_shifts[["shift_name", "start_time", "duration_hrs", "break_mins"]].rename(
+            columns={"shift_name": "Shift Name", "start_time": "Start Time", "duration_hrs": "Working Hrs", "break_mins": "Break (Mins)"}), use_container_width=True)
+
+# --- DASHBOARD ---
 def render_dashboard(role, dept):
     st.markdown("### 📈 Real-Time Attendance Analytics")
     df_emp = get_all_employees()
@@ -318,7 +403,7 @@ if not st.session_state.hr_logged_in and not st.session_state.super_logged_in:
             with st.form("hr_login_form"):
                 st.markdown("### 🔐 Secure Login")
                 hr_user_input = st.text_input("Username")
-                hr_pass_input = st.text_input("Password", type="password")
+                hr_pass_input = st.text_input("Password", type="default")
                 if st.form_submit_button("Authenticate"):
                     hr_check = supabase.table("hr_users").select("*").eq("username", hr_user_input).eq("password", hr_pass_input).execute()
                     if hr_check.data:
@@ -333,7 +418,7 @@ if not st.session_state.hr_logged_in and not st.session_state.super_logged_in:
         elif login_type == "Super Admin Portal":
             with st.form("super_login_form"):
                 st.markdown("### 🛡️ Master Control Login")
-                super_pass_input = st.text_input("Master Key Password", type="password")
+                super_pass_input = st.text_input("Master Key Password", type="default")
                 if st.form_submit_button("Authenticate Mainframe"):
                     if super_pass_input == "JoyMaster2026":
                         st.session_state.super_logged_in = True
@@ -377,6 +462,8 @@ elif st.session_state.hr_logged_in:
             st.markdown("### ⏱️ Daily Attendance Capture")
             
             tab1, tab2 = st.tabs(["📸 Live QR Scanner", "⌨️ Manual Entry"])
+            actions_list = ["Punch In", "Punch Out", "Break Out", "Break Over", "Leave"]
+            
             with tab1:
                 if st.session_state.last_scanned_id:
                     if st.session_state.success_msg: st.success(st.session_state.success_msg)
@@ -388,7 +475,7 @@ elif st.session_state.hr_logged_in:
                         st.session_state.camera_key += 1
                         st.rerun()
                 else:
-                    punch_action = st.radio("Select Action to Enable Scanner:", ["Punch In", "Punch Out", "Break Start", "Break End", "Leave"], horizontal=True, index=None)
+                    punch_action = st.radio("Select Action to Enable Scanner:", actions_list, horizontal=True, index=None)
                     st.write("---") 
                     if punch_action is None: st.warning("⚠️ Please select an action above to activate the camera.")
                     else:
@@ -402,7 +489,7 @@ elif st.session_state.hr_logged_in:
             
             with tab2:
                 with st.form("manual_entry_form", clear_on_submit=True):
-                    manual_action = st.radio("Select Manual Action:", ["Punch In", "Punch Out", "Break Start", "Break End", "Leave"], horizontal=True)
+                    manual_action = st.radio("Select Manual Action:", actions_list, horizontal=True)
                     manual_id = st.text_input("Enter Employee ID Number")
                     if st.form_submit_button("Record Manual Punch") and manual_id:
                         supabase.table("attendance").insert({"emp_id": str(manual_id), "method": "Manual Entry", "punch_type": manual_action}).execute()
@@ -445,11 +532,12 @@ elif st.session_state.hr_logged_in:
                         st.success("✅ Successfully enrolled employees!")
                     except: st.error("Error reading CSV.")
 
-        # --- EMPLOYEE DIRECTORY & EYE ICON ID CARD PREVIEW ---
+        # --- EMPLOYEE DIRECTORY & EYE ICON PREVIEW ---
         elif hr_action == "👥 Directory":
             st.markdown("### 👥 Directory, Lifecycle & ID Management")
             
-            dir_tab1, dir_tab2, dir_tab3, dir_tab4, dir_tab5 = st.tabs(["📋 Employee Directory", "🪪 ID Cards & Eye Preview", "🕒 Shift Mapping", "🔄 Status & Delete", "🚪 Early Leave Approval"])
+            # REMOVED DELETE OPTION FOR HR / DEPT ADMIN. ONLY STATUS UPDATE TO ACTIVE/INACTIVE ALLOWED.
+            dir_tab1, dir_tab2, dir_tab3, dir_tab4, dir_tab5 = st.tabs(["📋 Employee Directory", "🪪 ID Cards & Eye Preview", "🕒 Shift Mapping", "🔄 Status Update", "🚪 Early Leave Approval"])
             
             df_emp_main = get_all_employees()
             if st.session_state.user_role == "Dept Admin" and not df_emp_main.empty:
@@ -481,7 +569,6 @@ elif st.session_state.hr_logged_in:
                         ed = emp_dict[selected_emp]
                         id_img = generate_id_card(ed['emp_id'], ed['name'], ed.get('department',''), ed.get('mobile',''))
                         
-                        # EYE TYPE ICON PREVIEW TOGGLE
                         col_eye1, col_eye2 = st.columns([1, 3])
                         with col_eye1:
                             view_toggle = st.checkbox("👁️ View ID Card Preview", value=st.session_state.show_id_card)
@@ -519,32 +606,20 @@ elif st.session_state.hr_logged_in:
                         st.success(f"Updated shifts successfully!")
 
             with dir_tab4:
-                st.markdown("#### 🔄 Update Status or ❌ Delete Employee Profile")
-                with st.form("status_delete_form"):
+                st.markdown("#### 🔄 Update Employee Status (Active / Inactive)")
+                with st.form("status_update_only_form"):
                     c1, c2, c3 = st.columns(3)
                     with c1: update_id = st.text_input("Enter Employee ID")
-                    with c2: new_status = st.selectbox("New Status", ["Active", "Left"])
+                    with c2: new_status = st.selectbox("New Status", ["Active", "Inactive"])
                     with c3: eff_date = st.date_input("Effective Date", datetime.now(IST).date())
                     
-                    col_sub1, col_sub2 = st.columns(2)
-                    with col_sub1:
-                        submit_status = st.form_submit_button("Update Status")
-                    with col_sub2:
-                        submit_delete = st.form_submit_button("🗑️ Delete Employee permanently")
-                        
-                    if update_id:
-                        if str(update_id) in df_emp_main['emp_id'].astype(str).values:
-                            if submit_status:
-                                supabase.table("employees").update({"status": new_status, "status_updated_on": eff_date.strftime('%d-%m-%Y')}).eq("emp_id", str(update_id)).execute()
-                                st.success(f"✅ Employee status updated!")
-                                st.rerun()
-                            if submit_delete:
-                                supabase.table("employees").delete().eq("emp_id", str(update_id)).execute()
-                                st.success(f"🗑️ Employee ID {update_id} permanently deleted from system database!")
-                                st.rerun()
+                    if st.form_submit_button("Update Status"):
+                        if update_id and str(update_id) in df_emp_main['emp_id'].astype(str).values:
+                            supabase.table("employees").update({"status": new_status, "status_updated_on": eff_date.strftime('%d-%m-%Y')}).eq("emp_id", str(update_id)).execute()
+                            st.success(f"✅ Employee status updated to {new_status}!")
+                            st.rerun()
                         else:
-                            if submit_status or submit_delete:
-                                st.error("❌ You cannot modify or delete an employee ID outside your scope.")
+                            st.error("❌ Invalid employee ID or outside your scope.")
 
             with dir_tab5:
                 st.markdown("#### 🚪 Individual Early Leave Approval / Modification")
@@ -552,14 +627,12 @@ elif st.session_state.hr_logged_in:
                 if not df_emp_main.empty:
                     emp_el_dict = {f"{r['name']} (ID: {r['emp_id']})": str(r['emp_id']) for _, r in df_emp_main.iterrows()}
                     
-                    # Selection for modification check
                     sel_emp_mod = st.selectbox("Select Employee for Review/Modification", list(emp_el_dict.keys()), key="mod_emp_sel")
                     sel_date_mod = st.date_input("Select Date", datetime.now(IST).date(), key="mod_date_sel")
                     
                     target_id = emp_el_dict[sel_emp_mod]
                     target_date_str = sel_date_mod.strftime('%Y-%m-%d')
                     
-                    # Fetch existing record if available
                     df_att_chk = get_all_attendance()
                     existing_rec = df_att_chk[(df_att_chk['emp_id'] == target_id) & (df_att_chk['date_only'] == target_date_str)]
                     
@@ -626,7 +699,7 @@ elif st.session_state.hr_logged_in:
                             current_in = None
                             for _, row in grp.iterrows():
                                 p_type = row.get("punch_type", "")
-                                if p_type == "Punch In":
+                                if p_type in ["Punch In", "QR Code", "Manual Entry"]:
                                     if current_in is not None:
                                         records.append({"emp_id": str(emp_id), "Punch In": current_in["time_logged"], "Punch Out": pd.NaT, "early_leave_approved": current_in.get("early_leave_approved", False), "remarks": current_in.get("remarks", "")})
                                     current_in = row
@@ -740,7 +813,7 @@ elif st.session_state.hr_logged_in:
                     st.info("No records available.")
 
         elif hr_action == "⚙️ Shift Master": render_shift_master_ui()
-        elif hr_action == "🔐 Access Control": render_access_management()
+        elif hr_action == "🔐 Access Control": render_access_management(is_super_admin=False)
 
 # ==========================================
 #         STATE 3: SUPER ADMIN DASHBOARD
@@ -758,5 +831,5 @@ elif st.session_state.super_logged_in:
             st.rerun()
             
         if sa_action == "📈 Real-Time Dashboard": render_dashboard("Super Admin", "All")
-        elif sa_action == "🔐 Access Management": render_access_management()
+        elif sa_action == "🔐 Access Management": render_access_management(is_super_admin=True)
         elif sa_action == "🔑 Change Password": render_password_change("SuperAdmin")
