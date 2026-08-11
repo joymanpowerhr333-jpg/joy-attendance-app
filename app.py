@@ -1131,8 +1131,7 @@ def render_dashboard(role, dept):
     st.markdown("### 📱 WhatsApp Report Integration")
     st.markdown("Send attendance reports directly via WhatsApp Business Cloud API")
     
-    with st.expander("📋 WhatsApp Cloud API Administration", expanded=False):
-        render_whatsapp_admin()
+    render_whatsapp_admin()
     
     whatsapp_col1, whatsapp_col2, whatsapp_col3 = st.columns([1, 1, 1])
     with whatsapp_col1:
