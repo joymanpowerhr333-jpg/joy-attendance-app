@@ -84,10 +84,8 @@ st.markdown("""
     }
     div[data-testid="stMetricValue"] { font-size: 1.8rem !important; color: #df7113 !important; }
     
-    /* Hide password visibility */
     input[type="password"] { -webkit-text-security: disc !important; }
     
-    /* WhatsApp button styling */
     .whatsapp-btn {
         background: #25D366 !important;
         color: white !important;
@@ -103,7 +101,6 @@ st.markdown("""
         box-shadow: 0px 4px 15px rgba(37, 211, 102, 0.4) !important;
     }
     
-    /* Footer styling */
     .footer {
         position: fixed;
         left: 0;
@@ -119,7 +116,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- SUPABASE CONFIGURATION (UPDATED WITH NEW KEY) ---
+# --- SUPABASE CONFIGURATION ---
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://qjifyweayliqjvrxxxim.supabase.co")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFqaWZ5d2VheWxpcWp2cnh4eGltIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU5MjgwODQsImV4cCI6MjEwMTUwNDA4NH0.YWLPS0CEom-lzRSH9vPyKQ3QgSRTgZ6v0etuQGVIJSw")
 WHATSAPP_ACCESS_TOKEN = os.environ.get("WHATSAPP_ACCESS_TOKEN", "EAAPvubdjyvEBSHVUHvATJpbF7eVS8ptfLCYcCAgOTnrbMKyp9Uwm0F7Tinz3JdluM5r6EmCW9j6jqaEqSesKgKuDZBcfYgyHfgkyoLiKqmJ1W5BbyngSK9VmgZCYOmhXIDZBtPIAuKiNQlSMhnHLwWRyjXXIoEu3VC0LgD5tgZCCsEKhba7yyItHi7Y7iMBf")
@@ -203,7 +200,6 @@ def generate_id_card(emp_id, name, department, mobile):
 
 # --- WHATSAPP CLOUD API WITH SUPABASE INTEGRATION ---
 def initialize_whatsapp_tables():
-    """Create WhatsApp related tables in Supabase if they don't exist"""
     try:
         res = supabase.table("whatsapp_recipients").select("*").limit(1).execute()
         return True
@@ -931,27 +927,27 @@ def render_whatsapp_admin():
     
     with tab1:
         st.markdown("#### 📋 Manage WhatsApp Recipients")
+        st.markdown("#### ➕ Add New Recipient")
         
-        with st.expander("➕ Add New Recipient", expanded=False):
-            with st.form("add_recipient_form"):
-                c1, c2 = st.columns(2)
-                with c1:
-                    phone = st.text_input("Phone Number*", placeholder="+91XXXXXXXXXX")
-                    name = st.text_input("Name*")
-                with c2:
-                    dept = st.text_input("Department")
-                    role = st.selectbox("Role", ["HR", "Admin", "Manager", "Employee"])
-                
-                if st.form_submit_button("Add Recipient"):
-                    if phone and name:
-                        success, message = add_whatsapp_recipient(phone, name, dept, role)
-                        if success:
-                            st.success(message)
-                            st.rerun()
-                        else:
-                            st.error(message)
+        with st.form("add_recipient_form"):
+            c1, c2 = st.columns(2)
+            with c1:
+                phone = st.text_input("Phone Number*", placeholder="+91XXXXXXXXXX")
+                name = st.text_input("Name*")
+            with c2:
+                dept = st.text_input("Department")
+                role = st.selectbox("Role", ["HR", "Admin", "Manager", "Employee"])
+            
+            if st.form_submit_button("Add Recipient"):
+                if phone and name:
+                    success, message = add_whatsapp_recipient(phone, name, dept, role)
+                    if success:
+                        st.success(message)
+                        st.rerun()
                     else:
-                        st.warning("Please fill in required fields")
+                        st.error(message)
+                else:
+                    st.warning("Please fill in required fields")
         
         df_recipients = get_whatsapp_recipients()
         if not df_recipients.empty:
@@ -1362,7 +1358,7 @@ if not st.session_state.hr_logged_in and not st.session_state.super_logged_in:
     with col_center:
         if os.path.exists(logo_path):
             logo_col1, logo_col2, logo_col3 = st.columns([5, 2, 5])
-            with logo_col2: st.image(logo_path, use_column_width=True)  # FIXED: use_column_width instead of use_container_width
+            with logo_col2: st.image(logo_path, use_column_width=True)
                 
         st.markdown("<h1>Joy Corporate Solutions</h1>", unsafe_allow_html=True)
         st.markdown("<p style='font-size: 18px;'>Enterprise Attendance Portal</p><br>", unsafe_allow_html=True)
@@ -1442,8 +1438,7 @@ elif st.session_state.hr_logged_in:
                     if st.session_state.error_msg: st.error(st.session_state.error_msg)
                     st.write("---")
                     if st.button("📸 Scan Next Employee", use_container_width=True):
-                        st.session_state.last_scanned_id = None
-                        st.session_state.success_msg = st.session_state.error_msg = ""
+                        st.session_state.last_scanned_id = None                        st.session_state.success_msg = st.session_state.error_msg = ""
                         st.session_state.camera_key += 1
                         st.rerun()
                 else:
