@@ -101,9 +101,15 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-url = st.secrets["SUPABASE_URL"]
-key = st.secrets["SUPABASE_KEY"]
-supabase: Client = create_client(url, key)
+# --- SUPABASE CONFIGURATION ---
+SUPABASE_URL = "https://qjifyweayliqjvrxxxim.supabase.co"
+SUPABASE_KEY = "sb_publishable_TjU7owlQ2PTiQrzt3_WDZw_cZcrBata"
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# --- WHATSAPP CREDENTIALS ---
+WHATSAPP_ACCESS_TOKEN = "EAAPvubdjyvEBSHVUHvATJpbF7eVS8ptfLCYcCAgOTnrbMKyp9Uwm0F7Tinz3JdluM5r6EmCW9j6jqaEqSesKgKuDZBcfYgyHfgkyoLiKqmJ1W5BbyngSK9VmgZCYOmhXIDZBtPIAuKiNQlSMhnHLwWRyjXXIoEu3VC0LgD5tgZCCsEKhba7yyItHi7Y7iMBf"
+WHATSAPP_PHONE_NUMBER_ID = "1156271404246124"
+WHATSAPP_VERIFY_TOKEN = "whatsapp_attendance_2026"
 
 # --- HELPER DATABASE FUNCTIONS ---
 def get_shift_data():
@@ -178,21 +184,20 @@ def initialize_whatsapp_tables():
         # Create whatsapp_recipients table
         supabase.table("whatsapp_recipients").select("*").limit(1).execute()
     except:
-        # Table doesn't exist, create it using SQL
-        sql = """
-        CREATE TABLE IF NOT EXISTS whatsapp_recipients (
-            id SERIAL PRIMARY KEY,
-            phone_number VARCHAR(20) NOT NULL,
-            name VARCHAR(100),
-            department VARCHAR(100),
-            role VARCHAR(50),
-            is_active BOOLEAN DEFAULT TRUE,
-            created_at TIMESTAMP DEFAULT NOW(),
-            updated_at TIMESTAMP DEFAULT NOW()
-        );
-        """
-        # Execute SQL via Supabase
+        # Table doesn't exist - create via SQL
         try:
+            sql = """
+            CREATE TABLE IF NOT EXISTS whatsapp_recipients (
+                id SERIAL PRIMARY KEY,
+                phone_number VARCHAR(20) NOT NULL UNIQUE,
+                name VARCHAR(100),
+                department VARCHAR(100),
+                role VARCHAR(50),
+                is_active BOOLEAN DEFAULT TRUE,
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW()
+            );
+            """
             supabase.rpc('exec_sql', {'sql': sql}).execute()
         except:
             pass
@@ -270,7 +275,7 @@ def log_whatsapp_message(recipient_id, phone_number, message_type, message_text,
             "recipient_id": recipient_id,
             "phone_number": phone_number,
             "message_type": message_type,
-            "message_text": message_text,
+            "message_text": message_text[:500] if message_text else "",
             "status": status,
             "message_id": message_id,
             "error_message": error_message,
@@ -285,10 +290,8 @@ def log_whatsapp_message(recipient_id, phone_number, message_type, message_text,
 def send_whatsapp_message_cloud_api(phone_number, message, recipient_id=None):
     """Send WhatsApp message using Meta's Cloud API with Supabase logging"""
     try:
-        # Get credentials from secrets
-        access_token = st.secrets.get("WHATSAPP_ACCESS_TOKEN")
-        phone_number_id = st.secrets.get("WHATSAPP_PHONE_NUMBER_ID")
-        verify_token = st.secrets.get("WHATSAPP_VERIFY_TOKEN", "")
+        access_token = WHATSAPP_ACCESS_TOKEN
+        phone_number_id = WHATSAPP_PHONE_NUMBER_ID
         
         if not access_token or not phone_number_id:
             error_msg = "WhatsApp Cloud API credentials not configured"
@@ -310,7 +313,6 @@ def send_whatsapp_message_cloud_api(phone_number, message, recipient_id=None):
         
         # Prepare the message payload
         if len(message) > 4000:
-            # Send as document for long messages
             return send_whatsapp_document_cloud_api(phone_number, message, recipient_id)
         
         payload = {
@@ -336,12 +338,12 @@ def send_whatsapp_message_cloud_api(phone_number, message, recipient_id=None):
                     recipient_id, 
                     clean_number, 
                     "text", 
-                    message[:500],  # Store first 500 chars
+                    message[:500],
                     "sent", 
                     message_id
                 )
             
-            return True, f"Message sent successfully! Message ID: {message_id}"
+            return True, f"✅ Message sent successfully! Message ID: {message_id}"
         else:
             error_data = response.json()
             error_message = error_data.get('error', {}).get('message', 'Unknown error')
@@ -358,7 +360,7 @@ def send_whatsapp_message_cloud_api(phone_number, message, recipient_id=None):
                     error_message
                 )
             
-            return False, f"WhatsApp API Error: {error_message}"
+            return False, f"❌ WhatsApp API Error: {error_message}"
             
     except requests.exceptions.RequestException as e:
         error_msg = f"Network error: {str(e)}"
@@ -375,93 +377,35 @@ def send_whatsapp_document_cloud_api(phone_number, message, recipient_id=None):
     """Send long messages as a document via WhatsApp Cloud API"""
     try:
         # For long messages, send as text with truncation
-        # WhatsApp Cloud API has a 4096 character limit for text messages
         truncated_message = message[:4000] + "\n\n... (truncated - full report in dashboard)"
-        
         return send_whatsapp_message_cloud_api(phone_number, truncated_message, recipient_id)
-        
     except Exception as e:
         return False, f"Error sending document: {str(e)}"
 
-def send_whatsapp_template_message_cloud_api(phone_number, template_name, template_params=None, recipient_id=None):
-    """Send a template message via WhatsApp Cloud API with Supabase logging"""
+def test_whatsapp_connection():
+    """Test WhatsApp Cloud API connection with provided credentials"""
     try:
-        access_token = st.secrets.get("WHATSAPP_ACCESS_TOKEN")
-        phone_number_id = st.secrets.get("WHATSAPP_PHONE_NUMBER_ID")
+        access_token = WHATSAPP_ACCESS_TOKEN
+        phone_number_id = WHATSAPP_PHONE_NUMBER_ID
         
         if not access_token or not phone_number_id:
-            error_msg = "WhatsApp Cloud API credentials not configured"
-            if recipient_id:
-                log_whatsapp_message(recipient_id, phone_number, "template", template_name, "failed", None, error_msg)
-            return False, error_msg
+            return False, "WhatsApp credentials not found"
         
-        clean_number = phone_number.replace('+', '').strip()
+        # Test API connection
+        url = f"https://graph.facebook.com/v17.0/{phone_number_id}"
+        headers = {"Authorization": f"Bearer {access_token}"}
         
-        api_url = f"https://graph.facebook.com/v17.0/{phone_number_id}/messages"
+        response = requests.get(url, headers=headers, timeout=10)
         
-        headers = {
-            "Authorization": f"Bearer {access_token}",
-            "Content-Type": "application/json"
-        }
-        
-        payload = {
-            "messaging_product": "whatsapp",
-            "to": clean_number,
-            "type": "template",
-            "template": {
-                "name": template_name,
-                "language": {
-                    "code": "en"
-                }
-            }
-        }
-        
-        if template_params:
-            payload["template"]["components"] = [
-                {
-                    "type": "body",
-                    "parameters": [
-                        {"type": "text", "text": str(param)} for param in template_params
-                    ]
-                }
-            ]
-        
-        response = requests.post(api_url, headers=headers, json=payload, timeout=30)
-        
-        if response.status_code == 200 or response.status_code == 201:
-            result = response.json()
-            message_id = result.get('messages', [{}])[0].get('id', 'N/A')
-            
-            if recipient_id:
-                log_whatsapp_message(
-                    recipient_id, 
-                    clean_number, 
-                    "template", 
-                    template_name,
-                    "sent", 
-                    message_id
-                )
-            
-            return True, f"Template message sent successfully! Message ID: {message_id}"
+        if response.status_code == 200:
+            data = response.json()
+            return True, f"✅ Connection successful! Phone Number: {data.get('display_phone_number', 'N/A')}"
         else:
-            error_data = response.json()
-            error_message = error_data.get('error', {}).get('message', 'Unknown error')
-            
-            if recipient_id:
-                log_whatsapp_message(
-                    recipient_id, 
-                    clean_number, 
-                    "template", 
-                    template_name,
-                    "failed", 
-                    None, 
-                    error_message
-                )
-            
-            return False, f"WhatsApp API Error: {error_message}"
+            error = response.json().get('error', {}).get('message', 'Unknown error')
+            return False, f"❌ Connection failed: {error}"
             
     except Exception as e:
-        return False, f"Error sending template: {str(e)}"
+        return False, f"❌ Error: {str(e)}"
 
 def format_attendance_report_for_whatsapp(df_emp, df_att, report_type="daily", date_range=None):
     """Format attendance data for WhatsApp report"""
@@ -672,199 +616,6 @@ def send_whatsapp_report(phone_number, report_type="daily", date_range=None):
             
     except Exception as e:
         return False, f"Error generating report: {str(e)}"
-
-def verify_whatsapp_webhook_signature(payload, signature, verify_token):
-    """Verify WhatsApp webhook signature"""
-    try:
-        # Calculate expected signature
-        expected = hmac.new(
-            verify_token.encode('utf-8'),
-            payload.encode('utf-8'),
-            hashlib.sha256
-        ).hexdigest()
-        
-        return hmac.compare_digest(expected, signature)
-    except:
-        return False
-
-def process_whatsapp_webhook(data):
-    """Process incoming WhatsApp webhook data"""
-    try:
-        # Get entry data
-        entries = data.get('entry', [])
-        for entry in entries:
-            changes = entry.get('changes', [])
-            for change in changes:
-                value = change.get('value', {})
-                messages = value.get('messages', [])
-                
-                for message in messages:
-                    # Process message
-                    phone_number = message.get('from', '')
-                    text = message.get('text', {}).get('body', '')
-                    
-                    # Log incoming message
-                    try:
-                        supabase.table("whatsapp_messages").insert({
-                            "phone_number": phone_number,
-                            "message_type": "incoming",
-                            "message_text": text,
-                            "status": "received"
-                        }).execute()
-                    except:
-                        pass
-                    
-                    # Process commands
-                    if text.lower() == "attendance":
-                        # Send attendance report
-                        send_whatsapp_report(phone_number, "daily")
-                    elif text.lower() == "monthly":
-                        send_whatsapp_report(phone_number, "monthly")
-                    elif text.lower() == "help":
-                        help_msg = "🤖 *Available Commands:*\n\n"
-                        help_msg += "📊 *attendance* - Get today's attendance report\n"
-                        help_msg += "📅 *monthly* - Get monthly attendance summary\n"
-                        help_msg += "❓ *help* - Show this help message"
-                        send_whatsapp_message_cloud_api(phone_number, help_msg)
-        
-        return True
-    except Exception as e:
-        print(f"Error processing webhook: {str(e)}")
-        return False
-
-def render_whatsapp_admin():
-    """Render WhatsApp Admin panel"""
-    st.markdown("### 📱 WhatsApp Cloud API Administration")
-    
-    # Initialize tables
-    initialize_whatsapp_tables()
-    
-    tab1, tab2, tab3 = st.tabs(["📋 Recipients", "📨 Message Logs", "⚙️ Settings"])
-    
-    with tab1:
-        st.markdown("#### 📋 Manage WhatsApp Recipients")
-        
-        # Add recipient form
-        with st.expander("➕ Add New Recipient", expanded=False):
-            with st.form("add_recipient_form"):
-                c1, c2 = st.columns(2)
-                with c1:
-                    phone = st.text_input("Phone Number*", placeholder="+91XXXXXXXXXX")
-                    name = st.text_input("Name*")
-                with c2:
-                    dept = st.text_input("Department")
-                    role = st.selectbox("Role", ["HR", "Admin", "Manager", "Employee"])
-                
-                if st.form_submit_button("Add Recipient"):
-                    if phone and name:
-                        success, message = add_whatsapp_recipient(phone, name, dept, role)
-                        if success:
-                            st.success(message)
-                            st.rerun()
-                        else:
-                            st.error(message)
-                    else:
-                        st.warning("Please fill in required fields")
-        
-        # Recipients list
-        df_recipients = get_whatsapp_recipients()
-        if not df_recipients.empty:
-            st.dataframe(
-                df_recipients[['id', 'phone_number', 'name', 'department', 'role']],
-                use_container_width=True,
-                hide_index=True
-            )
-            
-            # Remove recipient
-            col1, col2 = st.columns([2, 1])
-            with col1:
-                recipient_to_remove = st.selectbox(
-                    "Select recipient to remove",
-                    df_recipients['name'].tolist()
-                )
-            with col2:
-                if st.button("🗑️ Remove Recipient", use_container_width=True):
-                    recipient_id = df_recipients[df_recipients['name'] == recipient_to_remove]['id'].values[0]
-                    success, message = remove_whatsapp_recipient(recipient_id)
-                    if success:
-                        st.success(message)
-                        st.rerun()
-                    else:
-                        st.error(message)
-        else:
-            st.info("No WhatsApp recipients added yet")
-    
-    with tab2:
-        st.markdown("#### 📨 WhatsApp Message Logs")
-        
-        # Get message logs
-        try:
-            logs = supabase.table("whatsapp_messages").select("*").order("created_at", desc=True).limit(100).execute()
-            if logs.data:
-                df_logs = pd.DataFrame(logs.data)
-                df_logs['created_at'] = pd.to_datetime(df_logs['created_at']).dt.strftime('%d-%m-%Y %H:%M')
-                
-                st.dataframe(
-                    df_logs[['created_at', 'phone_number', 'message_type', 'status', 'message_text']],
-                    use_container_width=True,
-                    hide_index=True
-                )
-                
-                # Export logs
-                csv = df_logs.to_csv(index=False).encode('utf-8')
-                st.download_button(
-                    "📥 Export Logs CSV",
-                    data=csv,
-                    file_name=f"whatsapp_logs_{datetime.now(IST).strftime('%Y%m%d')}.csv",
-                    mime="text/csv"
-                )
-            else:
-                st.info("No message logs found")
-        except:
-            st.info("Message logs table not yet created")
-    
-    with tab3:
-        st.markdown("#### ⚙️ WhatsApp Cloud API Settings")
-        
-        # Check configuration
-        access_token = st.secrets.get("WHATSAPP_ACCESS_TOKEN", "")
-        phone_number_id = st.secrets.get("WHATSAPP_PHONE_NUMBER_ID", "")
-        verify_token = st.secrets.get("WHATSAPP_VERIFY_TOKEN", "")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            if access_token:
-                st.success("✅ Access Token configured")
-            else:
-                st.error("❌ Access Token missing")
-            
-            if phone_number_id:
-                st.success("✅ Phone Number ID configured")
-            else:
-                st.error("❌ Phone Number ID missing")
-        with col2:
-            if verify_token:
-                st.success("✅ Verify Token configured")
-            else:
-                st.warning("⚠️ Verify Token not configured (required for webhook)")
-        
-        # Webhook configuration
-        st.markdown("---")
-        st.markdown("#### 🔗 Webhook Configuration")
-        st.info("""
-        **Webhook URL:** `https://your-app-url.com/streamlit/`
-        
-        **Verify Token:** `{verify_token}`
-        
-        **Subscribe to events:**
-        - messages
-        - message_deliveries
-        - message_reads
-        """)
-        
-        # Test webhook
-        if st.button("🔧 Test Webhook Connection"):
-            st.success("Webhook test successful! (placeholder)")
 
 # --- EARLY LEAVE REQUEST FUNCTIONS ---
 def request_early_leave(emp_id, date_str, reason, requested_by):
@@ -1214,6 +965,157 @@ def render_shift_master_ui():
                         st.success(f"✅ Deleted {del_shift}!")
                         st.rerun()
                     except: st.error("Error deleting shift.")
+
+# --- WHATSAPP ADMIN PANEL ---
+def render_whatsapp_admin():
+    """Render WhatsApp Admin panel"""
+    st.markdown("### 📱 WhatsApp Cloud API Administration")
+    
+    # Initialize tables
+    initialize_whatsapp_tables()
+    
+    tab1, tab2, tab3 = st.tabs(["📋 Recipients", "📨 Message Logs", "⚙️ Settings"])
+    
+    with tab1:
+        st.markdown("#### 📋 Manage WhatsApp Recipients")
+        
+        # Add recipient form
+        with st.expander("➕ Add New Recipient", expanded=False):
+            with st.form("add_recipient_form"):
+                c1, c2 = st.columns(2)
+                with c1:
+                    phone = st.text_input("Phone Number*", placeholder="+91XXXXXXXXXX")
+                    name = st.text_input("Name*")
+                with c2:
+                    dept = st.text_input("Department")
+                    role = st.selectbox("Role", ["HR", "Admin", "Manager", "Employee"])
+                
+                if st.form_submit_button("Add Recipient"):
+                    if phone and name:
+                        success, message = add_whatsapp_recipient(phone, name, dept, role)
+                        if success:
+                            st.success(message)
+                            st.rerun()
+                        else:
+                            st.error(message)
+                    else:
+                        st.warning("Please fill in required fields")
+        
+        # Recipients list
+        df_recipients = get_whatsapp_recipients()
+        if not df_recipients.empty:
+            st.dataframe(
+                df_recipients[['id', 'phone_number', 'name', 'department', 'role']],
+                use_container_width=True,
+                hide_index=True
+            )
+            
+            # Remove recipient
+            col1, col2 = st.columns([2, 1])
+            with col1:
+                recipient_to_remove = st.selectbox(
+                    "Select recipient to remove",
+                    df_recipients['name'].tolist()
+                )
+            with col2:
+                if st.button("🗑️ Remove Recipient", use_container_width=True):
+                    recipient_id = df_recipients[df_recipients['name'] == recipient_to_remove]['id'].values[0]
+                    success, message = remove_whatsapp_recipient(recipient_id)
+                    if success:
+                        st.success(message)
+                        st.rerun()
+                    else:
+                        st.error(message)
+        else:
+            st.info("No WhatsApp recipients added yet")
+    
+    with tab2:
+        st.markdown("#### 📨 WhatsApp Message Logs")
+        
+        # Get message logs
+        try:
+            logs = supabase.table("whatsapp_messages").select("*").order("created_at", desc=True).limit(100).execute()
+            if logs.data:
+                df_logs = pd.DataFrame(logs.data)
+                df_logs['created_at'] = pd.to_datetime(df_logs['created_at']).dt.strftime('%d-%m-%Y %H:%M')
+                
+                st.dataframe(
+                    df_logs[['created_at', 'phone_number', 'message_type', 'status', 'message_text']],
+                    use_container_width=True,
+                    hide_index=True
+                )
+                
+                # Export logs
+                csv = df_logs.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    "📥 Export Logs CSV",
+                    data=csv,
+                    file_name=f"whatsapp_logs_{datetime.now(IST).strftime('%Y%m%d')}.csv",
+                    mime="text/csv"
+                )
+            else:
+                st.info("No message logs found")
+        except:
+            st.info("Message logs table not yet created")
+    
+    with tab3:
+        st.markdown("#### ⚙️ WhatsApp Cloud API Configuration")
+        
+        # Display current configuration
+        col1, col2 = st.columns(2)
+        with col1:
+            if WHATSAPP_ACCESS_TOKEN:
+                st.success("✅ Access Token configured")
+                # Show masked token
+                masked_token = WHATSAPP_ACCESS_TOKEN[:15] + "..." + WHATSAPP_ACCESS_TOKEN[-10:] if len(WHATSAPP_ACCESS_TOKEN) > 25 else "***"
+                st.code(masked_token, language="text")
+            else:
+                st.error("❌ Access Token missing")
+            
+            if WHATSAPP_PHONE_NUMBER_ID:
+                st.success(f"✅ Phone Number ID: {WHATSAPP_PHONE_NUMBER_ID}")
+            else:
+                st.error("❌ Phone Number ID missing")
+        
+        with col2:
+            if WHATSAPP_VERIFY_TOKEN:
+                st.success(f"✅ Verify Token: {WHATSAPP_VERIFY_TOKEN}")
+            else:
+                st.warning("⚠️ Verify Token not configured")
+        
+        # Test connection button
+        if st.button("🔧 Test WhatsApp Connection"):
+            with st.spinner("Testing connection..."):
+                success, message = test_whatsapp_connection()
+                if success:
+                    st.success(message)
+                    st.balloons()
+                else:
+                    st.error(message)
+        
+        # Send test message
+        st.markdown("---")
+        st.markdown("#### 📤 Send Test Message")
+        
+        test_phone = st.text_input("📞 Your WhatsApp Number (with country code)", 
+                                  placeholder="+91XXXXXXXXXX",
+                                  help="Enter your phone number to send a test message")
+        
+        test_message = st.text_area("Test Message", 
+                                   value="Hello! This is a test message from Joy Corporate Solutions WhatsApp integration. 🎉",
+                                   height=100)
+        
+        if st.button("📤 Send Test Message"):
+            if test_phone:
+                with st.spinner("Sending test message..."):
+                    success, result = send_whatsapp_message_cloud_api(test_phone, test_message)
+                    if success:
+                        st.success(result)
+                        st.balloons()
+                    else:
+                        st.error(result)
+            else:
+                st.warning("⚠️ Please enter a phone number")
 
 # --- DASHBOARD ---
 def render_dashboard(role, dept):
