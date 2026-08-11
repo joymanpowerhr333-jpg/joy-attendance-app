@@ -1,8 +1,10 @@
 services:
-  # FastAPI Webhook Service
+  # FastAPI Webhook Service - For WhatsApp webhook
   - type: web
     name: whatsapp-webhook
     runtime: python
+    repo: https://github.com/yourusername/joy-attendance-app
+    plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn -w 4 -k uvicorn.workers.UvicornWorker webhook:app --bind 0.0.0.0:$PORT
     envVars:
@@ -16,15 +18,31 @@ services:
         value: 1156271404246124
       - key: WHATSAPP_VERIFY_TOKEN
         value: whatsapp_attendance_2026
+      - key: ENVIRONMENT
+        value: production
+      - key: PYTHON_VERSION
+        value: 3.10.0
 
-  # Streamlit Service (if needed as separate service)
+  # Streamlit Web Service - For the main application
   - type: web
     name: joy-attendance-app
     runtime: python
+    repo: https://github.com/yourusername/joy-attendance-app
+    plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: streamlit run app.py --server.port 8501 --server.address 0.0.0.0
+    startCommand: streamlit run app.py --server.port 8501 --server.address 0.0.0.0 --server.enableCORS false --server.enableXsrfProtection false
     envVars:
       - key: SUPABASE_URL
         value: https://qjifyweayliqjvrxxxim.supabase.co
       - key: SUPABASE_KEY
         value: sb_publishable_TjU7owlQ2PTiQrzt3_WDZw_cZcrBata
+      - key: WHATSAPP_ACCESS_TOKEN
+        value: EAAPvubdjyvEBSHVUHvATJpbF7eVS8ptfLCYcCAgOTnrbMKyp9Uwm0F7Tinz3JdluM5r6EmCW9j6jqaEqSesKgKuDZBcfYgyHfgkyoLiKqmJ1W5BbyngSK9VmgZCYOmhXIDZBtPIAuKiNQlSMhnHLwWRyjXXIoEu3VC0LgD5tgZCCsEKhba7yyItHi7Y7iMBf
+      - key: WHATSAPP_PHONE_NUMBER_ID
+        value: 1156271404246124
+      - key: WHATSAPP_VERIFY_TOKEN
+        value: whatsapp_attendance_2026
+      - key: ENVIRONMENT
+        value: production
+      - key: PYTHON_VERSION
+        value: 3.10.0
