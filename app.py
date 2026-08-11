@@ -9,16 +9,12 @@ import base64
 import os
 import io
 from streamlit_qrcode_scanner import qrcode_scanner
-import requests
-import json
-import hashlib
-import hmac
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
 
-# --- SESSION STATE INITIALIZATION (MUST BE FIRST) ---
+# --- SESSION STATE INITIALIZATION ---
 if "hr_logged_in" not in st.session_state: 
     st.session_state.hr_logged_in = False
 if "hr_username" not in st.session_state: 
@@ -40,7 +36,7 @@ if "error_msg" not in st.session_state:
 if "show_id_card" not in st.session_state: 
     st.session_state.show_id_card = False
 
-# --- PAGE CONFIGURATION & ALIGNMENT STYLING ---
+# --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Joy Corporate Solutions", page_icon="🏢", layout="wide")
 IST = timezone(timedelta(hours=5, minutes=30))
 
@@ -86,21 +82,6 @@ st.markdown("""
     
     input[type="password"] { -webkit-text-security: disc !important; }
     
-    .whatsapp-btn {
-        background: #25D366 !important;
-        color: white !important;
-        border-radius: 12px !important;
-        padding: 10px 24px !important;
-        font-weight: 700 !important;
-        border: none !important;
-        transition: all 0.2s ease-in-out !important;
-    }
-    .whatsapp-btn:hover {
-        background: #128C7E !important;
-        transform: translateY(-2px);
-        box-shadow: 0px 4px 15px rgba(37, 211, 102, 0.4) !important;
-    }
-    
     .footer {
         position: fixed;
         left: 0;
@@ -119,9 +100,6 @@ st.markdown("""
 # --- SUPABASE CONFIGURATION ---
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://qjifyweayliqjvrxxxim.supabase.co")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFqaWZ5d2VheWxpcWp2cnh4eGltIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU5MjgwODQsImV4cCI6MjEwMTUwNDA4NH0.YWLPS0CEom-lzRSH9vPyKQ3QgSRTgZ6v0etuQGVIJSw")
-WHATSAPP_ACCESS_TOKEN = os.environ.get("WHATSAPP_ACCESS_TOKEN", "EAAPvubdjyvEBSHVUHvATJpbF7eVS8ptfLCYcCAgOTnrbMKyp9Uwm0F7Tinz3JdluM5r6EmCW9j6jqaEqSesKgKuDZBcfYgyHfgkyoLiKqmJ1W5BbyngSK9VmgZCYOmhXIDZBtPIAuKiNQlSMhnHLwWRyjXXIoEu3VC0LgD5tgZCCsEKhba7yyItHi7Y7iMBf")
-WHATSAPP_PHONE_NUMBER_ID = os.environ.get("WHATSAPP_PHONE_NUMBER_ID", "1156271404246124")
-WHATSAPP_VERIFY_TOKEN = os.environ.get("WHATSAPP_VERIFY_TOKEN", "whatsapp_attendance_2026")
 
 # Initialize Supabase client
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -197,386 +175,6 @@ def generate_id_card(emp_id, name, department, mobile):
     draw.text((20, height + 80), f"Dept: {department}", fill="#666666", font=font_small)
     draw.text((20, height + 110), f"Phone: {mobile}", fill="#666666", font=font_small)
     return id_card
-
-# --- WHATSAPP CLOUD API WITH SUPABASE INTEGRATION ---
-def initialize_whatsapp_tables():
-    try:
-        res = supabase.table("whatsapp_recipients").select("*").limit(1).execute()
-        return True
-    except:
-        try:
-            sql1 = """
-            CREATE TABLE IF NOT EXISTS whatsapp_recipients (
-                id SERIAL PRIMARY KEY,
-                phone_number VARCHAR(20) NOT NULL UNIQUE,
-                name VARCHAR(100),
-                department VARCHAR(100),
-                role VARCHAR(50),
-                is_active BOOLEAN DEFAULT TRUE,
-                created_at TIMESTAMP DEFAULT NOW(),
-                updated_at TIMESTAMP DEFAULT NOW()
-            );
-            """
-            supabase.rpc('exec_sql', {'sql': sql1}).execute()
-            
-            sql2 = """
-            CREATE TABLE IF NOT EXISTS whatsapp_messages (
-                id SERIAL PRIMARY KEY,
-                recipient_id INTEGER REFERENCES whatsapp_recipients(id),
-                phone_number VARCHAR(20) NOT NULL,
-                message_type VARCHAR(50),
-                message_text TEXT,
-                template_name VARCHAR(100),
-                status VARCHAR(50),
-                message_id VARCHAR(100),
-                error_message TEXT,
-                created_at TIMESTAMP DEFAULT NOW(),
-                sent_at TIMESTAMP
-            );
-            """
-            supabase.rpc('exec_sql', {'sql': sql2}).execute()
-            return True
-        except:
-            return False
-
-def get_whatsapp_recipients():
-    try:
-        res = supabase.table("whatsapp_recipients").select("*").eq("is_active", True).execute()
-        if res.data:
-            return pd.DataFrame(res.data)
-        return pd.DataFrame()
-    except:
-        return pd.DataFrame()
-
-def add_whatsapp_recipient(phone_number, name, department, role):
-    try:
-        clean_number = phone_number.replace('+', '').strip()
-        existing = supabase.table("whatsapp_recipients").select("*").eq("phone_number", clean_number).execute()
-        if existing.data:
-            return False, "Phone number already exists in recipients list"
-        
-        data = {
-            "phone_number": clean_number,
-            "name": name,
-            "department": department,
-            "role": role,
-            "is_active": True
-        }
-        supabase.table("whatsapp_recipients").insert(data).execute()
-        return True, f"Recipient {name} added successfully!"
-    except Exception as e:
-        return False, f"Error adding recipient: {str(e)}"
-
-def remove_whatsapp_recipient(recipient_id):
-    try:
-        supabase.table("whatsapp_recipients").update({"is_active": False}).eq("id", recipient_id).execute()
-        return True, "Recipient removed successfully"
-    except Exception as e:
-        return False, f"Error removing recipient: {str(e)}"
-
-def log_whatsapp_message(recipient_id, phone_number, message_type, message_text, status, message_id=None, error_message=None):
-    try:
-        data = {
-            "recipient_id": recipient_id,
-            "phone_number": phone_number,
-            "message_type": message_type,
-            "message_text": message_text[:500] if message_text else "",
-            "status": status,
-            "message_id": message_id,
-            "error_message": error_message,
-            "sent_at": datetime.now(IST).isoformat()
-        }
-        supabase.table("whatsapp_messages").insert(data).execute()
-        return True
-    except Exception as e:
-        print(f"Error logging message: {str(e)}")
-        return False
-
-def send_whatsapp_message_cloud_api(phone_number, message, recipient_id=None):
-    try:
-        access_token = WHATSAPP_ACCESS_TOKEN
-        phone_number_id = WHATSAPP_PHONE_NUMBER_ID
-        
-        if not access_token or not phone_number_id:
-            error_msg = "WhatsApp Cloud API credentials not configured"
-            if recipient_id:
-                log_whatsapp_message(recipient_id, phone_number, "text", message, "failed", None, error_msg)
-            return False, error_msg
-        
-        clean_number = phone_number.replace('+', '').strip()
-        api_url = f"https://graph.facebook.com/v17.0/{phone_number_id}/messages"
-        
-        headers = {
-            "Authorization": f"Bearer {access_token}",
-            "Content-Type": "application/json"
-        }
-        
-        if len(message) > 4000:
-            message = message[:4000] + "\n\n... (truncated - full report in dashboard)"
-        
-        payload = {
-            "messaging_product": "whatsapp",
-            "to": clean_number,
-            "type": "text",
-            "text": {
-                "preview_url": False,
-                "body": message
-            }
-        }
-        
-        response = requests.post(api_url, headers=headers, json=payload, timeout=30)
-        
-        if response.status_code == 200 or response.status_code == 201:
-            result = response.json()
-            message_id = result.get('messages', [{}])[0].get('id', 'N/A')
-            
-            if recipient_id:
-                log_whatsapp_message(
-                    recipient_id, 
-                    clean_number, 
-                    "text", 
-                    message[:500],
-                    "sent", 
-                    message_id
-                )
-            
-            return True, f"✅ Message sent successfully! Message ID: {message_id}"
-        else:
-            error_data = response.json()
-            error_message = error_data.get('error', {}).get('message', 'Unknown error')
-            
-            if recipient_id:
-                log_whatsapp_message(
-                    recipient_id, 
-                    clean_number, 
-                    "text", 
-                    message[:500],
-                    "failed", 
-                    None, 
-                    error_message
-                )
-            
-            return False, f"❌ WhatsApp API Error: {error_message}"
-            
-    except requests.exceptions.RequestException as e:
-        error_msg = f"Network error: {str(e)}"
-        if recipient_id:
-            log_whatsapp_message(recipient_id, phone_number, "text", message[:500], "failed", None, error_msg)
-        return False, error_msg
-    except Exception as e:
-        error_msg = f"Error: {str(e)}"
-        if recipient_id:
-            log_whatsapp_message(recipient_id, phone_number, "text", message[:500], "failed", None, error_msg)
-        return False, error_msg
-
-def test_whatsapp_connection():
-    try:
-        access_token = WHATSAPP_ACCESS_TOKEN
-        phone_number_id = WHATSAPP_PHONE_NUMBER_ID
-        
-        if not access_token or not phone_number_id:
-            return False, "WhatsApp credentials not found"
-        
-        url = f"https://graph.facebook.com/v17.0/{phone_number_id}"
-        headers = {"Authorization": f"Bearer {access_token}"}
-        
-        response = requests.get(url, headers=headers, timeout=10)
-        
-        if response.status_code == 200:
-            data = response.json()
-            return True, f"✅ Connection successful! Phone Number: {data.get('display_phone_number', 'N/A')}"
-        else:
-            error = response.json().get('error', {}).get('message', 'Unknown error')
-            return False, f"❌ Connection failed: {error}"
-            
-    except Exception as e:
-        return False, f"❌ Error: {str(e)}"
-
-def format_attendance_report_for_whatsapp(df_emp, df_att, report_type="daily", date_range=None):
-    today = datetime.now(IST)
-    company_name = "JOY CORPORATE SOLUTIONS"
-    
-    if report_type == "daily":
-        today_str = today.strftime('%Y-%m-%d')
-        date_display = today.strftime('%d-%m-%Y')
-        
-        df_att_today = df_att[df_att['date_only'] == today_str]
-        
-        present_ids = df_att_today[df_att_today['punch_type'].isin(['Punch In', 'QR Code', 'Manual Entry'])]['emp_id'].unique()
-        leave_ids = df_att_today[df_att_today['punch_type'] == 'Leave']['emp_id'].unique()
-        
-        def get_status(emp_id):
-            if emp_id in present_ids: return 'Present'
-            elif emp_id in leave_ids: return 'Leave'
-            else: return 'Absent'
-        
-        df_emp['Today Status'] = df_emp['emp_id'].apply(get_status)
-        
-        total_employees = len(df_emp)
-        present = df_emp[df_emp['Today Status'] == 'Present'].shape[0]
-        absent = df_emp[df_emp['Today Status'] == 'Absent'].shape[0]
-        leave = df_emp[df_emp['Today Status'] == 'Leave'].shape[0]
-        attendance_rate = round((present / total_employees) * 100 if total_employees > 0 else 0, 1)
-        
-        message = f"📊 *{company_name}*\n"
-        message += f"📅 *Daily Attendance Report*\n"
-        message += f"🗓️ Date: {date_display}\n"
-        message += f"{'='*35}\n\n"
-        message += f"📌 *Total Employees:* {total_employees}\n"
-        message += f"✅ *Present:* {present}\n"
-        message += f"❌ *Absent:* {absent}\n"
-        message += f"🏠 *On Leave:* {leave}\n"
-        message += f"📈 *Attendance Rate:* {attendance_rate}%\n\n"
-        
-        if 'department' in df_emp.columns:
-            message += f"🏢 *Department-wise Breakdown:*\n"
-            dept_summary = df_emp.groupby('department')['Today Status'].value_counts().unstack(fill_value=0)
-            for dept in dept_summary.index:
-                dept_total = dept_summary.loc[dept].sum()
-                dept_present = dept_summary.loc[dept].get('Present', 0)
-                dept_rate = round((dept_present / dept_total) * 100 if dept_total > 0 else 0, 1)
-                message += f"  • {dept}: {dept_present}/{dept_total} ({dept_rate}%)\n"
-            message += "\n"
-        
-        present_emps = df_emp[df_emp['Today Status'] == 'Present']
-        if not present_emps.empty:
-            message += f"✅ *Present Employees:*\n"
-            for _, emp in present_emps.iterrows():
-                name = emp.get('name', 'N/A')
-                emp_id = emp.get('emp_id', 'N/A')
-                dept = emp.get('department', 'N/A')
-                message += f"  • {name} (ID: {emp_id}) - {dept}\n"
-            message += "\n"
-        
-        absent_emps = df_emp[df_emp['Today Status'] == 'Absent']
-        if not absent_emps.empty:
-            message += f"❌ *Absent Employees:*\n"
-            count = 0
-            for _, emp in absent_emps.iterrows():
-                if count >= 20:
-                    remaining = len(absent_emps) - 20
-                    message += f"  • ... and {remaining} more absent employees\n"
-                    break
-                name = emp.get('name', 'N/A')
-                emp_id = emp.get('emp_id', 'N/A')
-                dept = emp.get('department', 'N/A')
-                message += f"  • {name} (ID: {emp_id}) - {dept}\n"
-                count += 1
-            message += "\n"
-        
-        leave_emps = df_emp[df_emp['Today Status'] == 'Leave']
-        if not leave_emps.empty:
-            message += f"🏠 *On Leave:*\n"
-            for _, emp in leave_emps.iterrows():
-                name = emp.get('name', 'N/A')
-                emp_id = emp.get('emp_id', 'N/A')
-                message += f"  • {name} (ID: {emp_id})\n"
-        
-        message += f"\n{'-'*35}\n"
-        message += f"📱 *Generated by Joy Corporate Solutions*\n"
-        message += f"⏰ {today.strftime('%I:%M %p')} | {today.strftime('%d-%m-%Y')}"
-        
-    elif report_type == "monthly":
-        if date_range:
-            start_date, end_date = date_range
-            date_display = f"{start_date.strftime('%d-%m-%Y')} to {end_date.strftime('%d-%m-%Y')}"
-        else:
-            start_date = today.replace(day=1)
-            end_date = today
-            date_display = start_date.strftime('%B %Y')
-        
-        df_att_period = df_att[
-            (df_att['date_only'] >= start_date.strftime('%Y-%m-%d')) &
-            (df_att['date_only'] <= end_date.strftime('%Y-%m-%d'))
-        ]
-        
-        total_days = (end_date - start_date).days + 1
-        summary_data = []
-        
-        for _, emp in df_emp.iterrows():
-            emp_att = df_att_period[df_att_period['emp_id'] == emp['emp_id']]
-            present_days = emp_att[emp_att['punch_type'].isin(['Punch In', 'QR Code', 'Manual Entry'])]['date_only'].nunique()
-            attendance_pct = round((present_days / total_days * 100), 1) if total_days > 0 else 0
-            
-            summary_data.append({
-                'ID': emp['emp_id'],
-                'Name': emp.get('name', 'N/A'),
-                'Department': emp.get('department', 'N/A'),
-                'Present Days': present_days,
-                'Total Days': total_days,
-                'Attendance %': attendance_pct
-            })
-        
-        df_summary = pd.DataFrame(summary_data)
-        
-        message = f"📊 *{company_name}*\n"
-        message += f"📅 *Monthly Attendance Summary*\n"
-        message += f"🗓️ {date_display}\n"
-        message += f"{'='*35}\n\n"
-        
-        total_employees = len(df_summary)
-        avg_attendance = df_summary['Attendance %'].mean()
-        
-        message += f"📌 *Total Employees:* {total_employees}\n"
-        message += f"📈 *Average Attendance:* {round(avg_attendance, 1)}%\n"
-        message += f"📅 *Working Days:* {total_days}\n\n"
-        
-        top_5 = df_summary.nlargest(5, 'Attendance %')
-        message += f"🏆 *Top Performers:*\n"
-        for _, emp in top_5.iterrows():
-            message += f"  • {emp['Name']} - {emp['Attendance %']}% ({emp['Present Days']}/{total_days} days)\n"
-        message += "\n"
-        
-        bottom_5 = df_summary.nsmallest(5, 'Attendance %')
-        message += f"⚠️ *Needs Improvement:*\n"
-        for _, emp in bottom_5.iterrows():
-            message += f"  • {emp['Name']} - {emp['Attendance %']}% ({emp['Present Days']}/{total_days} days)\n"
-        message += "\n"
-        
-        if 'Department' in df_summary.columns:
-            message += f"🏢 *Department-wise Attendance:*\n"
-            dept_summary = df_summary.groupby('Department')['Attendance %'].mean().sort_values(ascending=False)
-            for dept, avg in dept_summary.items():
-                message += f"  • {dept}: {round(avg, 1)}%\n"
-        
-        message += f"\n{'-'*35}\n"
-        message += f"📱 *Generated by Joy Corporate Solutions*\n"
-        message += f"⏰ {today.strftime('%I:%M %p')} | {today.strftime('%d-%m-%Y')}"
-    
-    return message
-
-def send_whatsapp_report(phone_number, report_type="daily", date_range=None):
-    try:
-        df_emp = get_all_employees()
-        df_att = get_all_attendance()
-        
-        if df_emp.empty:
-            return False, "No employee data available"
-        
-        recipient_id = None
-        try:
-            res = supabase.table("whatsapp_recipients").select("id").eq("phone_number", phone_number.replace('+', '').strip()).execute()
-            if res.data:
-                recipient_id = res.data[0]['id']
-        except:
-            pass
-        
-        if report_type == "daily":
-            message = format_attendance_report_for_whatsapp(df_emp, df_att, "daily")
-        elif report_type == "monthly":
-            message = format_attendance_report_for_whatsapp(df_emp, df_att, "monthly", date_range)
-        else:
-            return False, "Invalid report type"
-        
-        success, result = send_whatsapp_message_cloud_api(phone_number, message, recipient_id)
-        
-        if success:
-            return True, f"WhatsApp report sent successfully to {phone_number}"
-        else:
-            return False, result
-            
-    except Exception as e:
-        return False, f"Error generating report: {str(e)}"
 
 # --- EARLY LEAVE REQUEST FUNCTIONS ---
 def request_early_leave(emp_id, date_str, reason, requested_by):
@@ -821,7 +419,7 @@ def render_access_management(is_super_admin=False):
             except:
                 st.error("Error loading user directory.")
 
-# --- SHIFT MASTER WITH ADVANCED TIMINGS ---
+# --- SHIFT MASTER ---
 def render_shift_master_ui():
     st.markdown("### ⚙️ Shift Master Management (8Hr Standard + 30m Overtime Rounding)")
     df_shifts = get_shift_data()
@@ -917,144 +515,6 @@ def render_shift_master_ui():
                         st.rerun()
                     except: st.error("Error deleting shift.")
 
-# --- WHATSAPP ADMIN PANEL ---
-def render_whatsapp_admin():
-    st.markdown("### 📱 WhatsApp Cloud API Administration")
-    
-    initialize_whatsapp_tables()
-    
-    tab1, tab2, tab3 = st.tabs(["📋 Recipients", "📨 Message Logs", "⚙️ Settings"])
-    
-    with tab1:
-        st.markdown("#### 📋 Manage WhatsApp Recipients")
-        st.markdown("#### ➕ Add New Recipient")
-        
-        with st.form("add_recipient_form"):
-            c1, c2 = st.columns(2)
-            with c1:
-                phone = st.text_input("Phone Number*", placeholder="+91XXXXXXXXXX")
-                name = st.text_input("Name*")
-            with c2:
-                dept = st.text_input("Department")
-                role = st.selectbox("Role", ["HR", "Admin", "Manager", "Employee"])
-            
-            if st.form_submit_button("Add Recipient"):
-                if phone and name:
-                    success, message = add_whatsapp_recipient(phone, name, dept, role)
-                    if success:
-                        st.success(message)
-                        st.rerun()
-                    else:
-                        st.error(message)
-                else:
-                    st.warning("Please fill in required fields")
-        
-        df_recipients = get_whatsapp_recipients()
-        if not df_recipients.empty:
-            st.dataframe(
-                df_recipients[['id', 'phone_number', 'name', 'department', 'role']],
-                use_container_width=True,
-                hide_index=True
-            )
-            
-            col1, col2 = st.columns([2, 1])
-            with col1:
-                recipient_to_remove = st.selectbox(
-                    "Select recipient to remove",
-                    df_recipients['name'].tolist()
-                )
-            with col2:
-                if st.button("🗑️ Remove Recipient", use_container_width=True):
-                    recipient_id = df_recipients[df_recipients['name'] == recipient_to_remove]['id'].values[0]
-                    success, message = remove_whatsapp_recipient(recipient_id)
-                    if success:
-                        st.success(message)
-                        st.rerun()
-                    else:
-                        st.error(message)
-        else:
-            st.info("No WhatsApp recipients added yet")
-    
-    with tab2:
-        st.markdown("#### 📨 WhatsApp Message Logs")
-        try:
-            logs = supabase.table("whatsapp_messages").select("*").order("created_at", desc=True).limit(100).execute()
-            if logs.data:
-                df_logs = pd.DataFrame(logs.data)
-                df_logs['created_at'] = pd.to_datetime(df_logs['created_at']).dt.strftime('%d-%m-%Y %H:%M')
-                
-                st.dataframe(
-                    df_logs[['created_at', 'phone_number', 'message_type', 'status', 'message_text']],
-                    use_container_width=True,
-                    hide_index=True
-                )
-                
-                csv = df_logs.to_csv(index=False).encode('utf-8')
-                st.download_button(
-                    "📥 Export Logs CSV",
-                    data=csv,
-                    file_name=f"whatsapp_logs_{datetime.now(IST).strftime('%Y%m%d')}.csv",
-                    mime="text/csv"
-                )
-            else:
-                st.info("No message logs found")
-        except:
-            st.info("Message logs table not yet created")
-    
-    with tab3:
-        st.markdown("#### ⚙️ WhatsApp Cloud API Configuration")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            if WHATSAPP_ACCESS_TOKEN:
-                st.success("✅ Access Token configured")
-                masked_token = WHATSAPP_ACCESS_TOKEN[:15] + "..." + WHATSAPP_ACCESS_TOKEN[-10:] if len(WHATSAPP_ACCESS_TOKEN) > 25 else "***"
-                st.code(masked_token, language="text")
-            else:
-                st.error("❌ Access Token missing")
-            
-            if WHATSAPP_PHONE_NUMBER_ID:
-                st.success(f"✅ Phone Number ID: {WHATSAPP_PHONE_NUMBER_ID}")
-            else:
-                st.error("❌ Phone Number ID missing")
-        
-        with col2:
-            if WHATSAPP_VERIFY_TOKEN:
-                st.success(f"✅ Verify Token: {WHATSAPP_VERIFY_TOKEN}")
-            else:
-                st.warning("⚠️ Verify Token not configured")
-        
-        if st.button("🔧 Test WhatsApp Connection"):
-            with st.spinner("Testing connection..."):
-                success, message = test_whatsapp_connection()
-                if success:
-                    st.success(message)
-                    st.balloons()
-                else:
-                    st.error(message)
-        
-        st.markdown("---")
-        st.markdown("#### 📤 Send Test Message")
-        
-        test_phone = st.text_input("📞 Your WhatsApp Number (with country code)", 
-                                  placeholder="+91XXXXXXXXXX")
-        
-        test_message = st.text_area("Test Message", 
-                                   value="Hello! This is a test message from Joy Corporate Solutions WhatsApp integration. 🎉",
-                                   height=100)
-        
-        if st.button("📤 Send Test Message"):
-            if test_phone:
-                with st.spinner("Sending test message..."):
-                    success, result = send_whatsapp_message_cloud_api(test_phone, test_message)
-                    if success:
-                        st.success(result)
-                        st.balloons()
-                    else:
-                        st.error(result)
-            else:
-                st.warning("⚠️ Please enter a phone number")
-
 # --- DASHBOARD ---
 def render_dashboard(role, dept):
     st.markdown("### 📈 Real-Time Attendance Analytics")
@@ -1122,63 +582,6 @@ def render_dashboard(role, dept):
     with m5: st.metric("Yesterday Present", f"{yest_att}")
 
     st.write("---")
-    
-    # --- WHATSAPP REPORT SECTION ---
-    st.markdown("### 📱 WhatsApp Report Integration")
-    st.markdown("Send attendance reports directly via WhatsApp Business Cloud API")
-    
-    render_whatsapp_admin()
-    
-    whatsapp_col1, whatsapp_col2, whatsapp_col3 = st.columns([1, 1, 1])
-    with whatsapp_col1:
-        df_recipients = get_whatsapp_recipients()
-        recipient_options = ["Custom Number"] + df_recipients['name'].tolist() if not df_recipients.empty else ["Custom Number"]
-        selected_recipient = st.selectbox("👤 Select Recipient", recipient_options)
-        
-        if selected_recipient == "Custom Number":
-            whatsapp_phone = st.text_input("📞 Phone Number", 
-                                          placeholder="+91XXXXXXXXXX")
-        else:
-            recipient_data = df_recipients[df_recipients['name'] == selected_recipient]
-            if not recipient_data.empty:
-                whatsapp_phone = recipient_data['phone_number'].values[0]
-                st.info(f"📱 Sending to: {selected_recipient} ({whatsapp_phone})")
-    
-    with whatsapp_col2:
-        report_type_whatsapp = st.selectbox("📊 Report Type", ["Daily Report", "Monthly Report", "Custom Date Range"])
-        
-        if report_type_whatsapp == "Custom Date Range":
-            col_date1, col_date2 = st.columns(2)
-            with col_date1:
-                custom_start = st.date_input("Start", datetime.now(IST).date() - timedelta(days=30))
-            with col_date2:
-                custom_end = st.date_input("End", datetime.now(IST).date())
-    
-    with whatsapp_col3:
-        st.write("")
-        st.write("")
-        if st.button("📤 Send Report via WhatsApp", use_container_width=True):
-            if whatsapp_phone:
-                with st.spinner("Generating and sending report..."):
-                    if report_type_whatsapp == "Daily Report":
-                        success, message = send_whatsapp_report(whatsapp_phone, "daily")
-                    elif report_type_whatsapp == "Monthly Report":
-                        success, message = send_whatsapp_report(whatsapp_phone, "monthly")
-                    else:
-                        if 'custom_start' in locals() and 'custom_end' in locals():
-                            success, message = send_whatsapp_report(whatsapp_phone, "monthly", (custom_start, custom_end))
-                        else:
-                            success, message = False, "Please select date range"
-                    
-                    if success:
-                        st.success(message)
-                        st.balloons()
-                    else:
-                        st.error(message)
-            else:
-                st.warning("⚠️ Please select a recipient or enter a phone number")
-    
-    st.markdown("---")
     st.markdown("### 🚨 Absenteeism & Leave Analytics")
 
     today_present_ids = df_att_dash[(df_att_dash['date_only'] == today_str) & (df_att_dash['punch_type'].isin(['Punch In', 'QR Code', 'Manual Entry']))]['emp_id'].unique() if not df_att_dash.empty else []
@@ -1438,7 +841,7 @@ elif st.session_state.hr_logged_in:
                     if st.session_state.error_msg: st.error(st.session_state.error_msg)
                     st.write("---")
                     if st.button("📸 Scan Next Employee", use_container_width=True):
-                        st.session_state.last_scanned_id = None                        
+                        st.session_state.last_scanned_id = None
                         st.session_state.success_msg = ""
                         st.session_state.error_msg = ""
                         st.session_state.camera_key += 1
