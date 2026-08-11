@@ -41,6 +41,7 @@ async def verify_webhook(
     challenge: str = Query(None, alias="hub.challenge")
 ):
     print(f"Webhook verification: mode={mode}, token={token}, challenge={challenge}")
+    print(f"Expected token: {WHATSAPP_VERIFY_TOKEN}")
     
     if mode == "subscribe" and token == WHATSAPP_VERIFY_TOKEN:
         return Response(content=challenge, media_type="text/plain", status_code=200)
