@@ -98,8 +98,14 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- SUPABASE CONFIGURATION ---
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://qjifyweayliqjvrxxxim.supabase.co")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFqaWZ5d2VheWxpcWp2cnh4eGltIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU5MjgwODQsImV4cCI6MjEwMTUwNDA4NH0.YWLPS0CEom-lzRSH9vPyKQ3QgSRTgZ6v0etuQGVIJSw")
+# For Streamlit Cloud, use st.secrets
+try:
+    SUPABASE_URL = st.secrets["SUPABASE_URL"]
+    SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+except:
+    # Fallback for local development
+    SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://qjifyweayliqjvrxxxim.supabase.co")
+    SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFqaWZ5d2VheWxpcWp2cnh4eGltIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU5MjgwODQsImV4cCI6MjEwMTUwNDA4NH0.YWLPS0CEom-lzRSH9vPyKQ3QgSRTgZ6v0etuQGVIJSw")
 
 # Initialize Supabase client
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -761,7 +767,7 @@ if not st.session_state.hr_logged_in and not st.session_state.super_logged_in:
     with col_center:
         if os.path.exists(logo_path):
             logo_col1, logo_col2, logo_col3 = st.columns([5, 2, 5])
-            with logo_col2: st.image(logo_path, use_column_width=True)
+            with logo_col2: st.image(logo_path, width=200)
                 
         st.markdown("<h1>Joy Corporate Solutions</h1>", unsafe_allow_html=True)
         st.markdown("<p style='font-size: 18px;'>Enterprise Attendance Portal</p><br>", unsafe_allow_html=True)
