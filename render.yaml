@@ -3,7 +3,6 @@ services:
   - type: web
     name: whatsapp-webhook
     runtime: python
-    repo: https://github.com/yourusername/joy-attendance-app
     plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn -w 4 -k uvicorn.workers.UvicornWorker webhook:app --bind 0.0.0.0:$PORT
@@ -27,7 +26,6 @@ services:
   - type: web
     name: joy-attendance-app
     runtime: python
-    repo: https://github.com/yourusername/joy-attendance-app
     plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: streamlit run app.py --server.port 8501 --server.address 0.0.0.0 --server.enableCORS false --server.enableXsrfProtection false
