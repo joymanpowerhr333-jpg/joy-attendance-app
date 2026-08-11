@@ -119,9 +119,9 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- SUPABASE CONFIGURATION (from environment) ---
+# --- SUPABASE CONFIGURATION (UPDATED WITH NEW KEY) ---
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://qjifyweayliqjvrxxxim.supabase.co")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "sb_publishable_TjU7owlQ2PTiQrzt3_WDZw_cZcrBata")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFqaWZ5d2VheWxpcWp2cnh4eGltIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU5MjgwODQsImV4cCI6MjEwMTUwNDA4NH0.YWLPS0CEom-lzRSH9vPyKQ3QgSRTgZ6v0etuQGVIJSw")
 WHATSAPP_ACCESS_TOKEN = os.environ.get("WHATSAPP_ACCESS_TOKEN", "EAAPvubdjyvEBSHVUHvATJpbF7eVS8ptfLCYcCAgOTnrbMKyp9Uwm0F7Tinz3JdluM5r6EmCW9j6jqaEqSesKgKuDZBcfYgyHfgkyoLiKqmJ1W5BbyngSK9VmgZCYOmhXIDZBtPIAuKiNQlSMhnHLwWRyjXXIoEu3VC0LgD5tgZCCsEKhba7yyItHi7Y7iMBf")
 WHATSAPP_PHONE_NUMBER_ID = os.environ.get("WHATSAPP_PHONE_NUMBER_ID", "1156271404246124")
 WHATSAPP_VERIFY_TOKEN = os.environ.get("WHATSAPP_VERIFY_TOKEN", "whatsapp_attendance_2026")
@@ -205,13 +205,10 @@ def generate_id_card(emp_id, name, department, mobile):
 def initialize_whatsapp_tables():
     """Create WhatsApp related tables in Supabase if they don't exist"""
     try:
-        # Check if whatsapp_recipients table exists
         res = supabase.table("whatsapp_recipients").select("*").limit(1).execute()
         return True
     except:
-        # Try to create tables via SQL
         try:
-            # Create whatsapp_recipients table
             sql1 = """
             CREATE TABLE IF NOT EXISTS whatsapp_recipients (
                 id SERIAL PRIMARY KEY,
@@ -226,7 +223,6 @@ def initialize_whatsapp_tables():
             """
             supabase.rpc('exec_sql', {'sql': sql1}).execute()
             
-            # Create whatsapp_messages table
             sql2 = """
             CREATE TABLE IF NOT EXISTS whatsapp_messages (
                 id SERIAL PRIMARY KEY,
@@ -248,7 +244,6 @@ def initialize_whatsapp_tables():
             return False
 
 def get_whatsapp_recipients():
-    """Get all WhatsApp recipients from Supabase"""
     try:
         res = supabase.table("whatsapp_recipients").select("*").eq("is_active", True).execute()
         if res.data:
@@ -258,17 +253,12 @@ def get_whatsapp_recipients():
         return pd.DataFrame()
 
 def add_whatsapp_recipient(phone_number, name, department, role):
-    """Add a new WhatsApp recipient to Supabase"""
     try:
-        # Clean phone number
         clean_number = phone_number.replace('+', '').strip()
-        
-        # Check if exists
         existing = supabase.table("whatsapp_recipients").select("*").eq("phone_number", clean_number).execute()
         if existing.data:
             return False, "Phone number already exists in recipients list"
         
-        # Insert new recipient
         data = {
             "phone_number": clean_number,
             "name": name,
@@ -282,7 +272,6 @@ def add_whatsapp_recipient(phone_number, name, department, role):
         return False, f"Error adding recipient: {str(e)}"
 
 def remove_whatsapp_recipient(recipient_id):
-    """Remove a WhatsApp recipient (soft delete)"""
     try:
         supabase.table("whatsapp_recipients").update({"is_active": False}).eq("id", recipient_id).execute()
         return True, "Recipient removed successfully"
@@ -290,7 +279,6 @@ def remove_whatsapp_recipient(recipient_id):
         return False, f"Error removing recipient: {str(e)}"
 
 def log_whatsapp_message(recipient_id, phone_number, message_type, message_text, status, message_id=None, error_message=None):
-    """Log WhatsApp message in Supabase"""
     try:
         data = {
             "recipient_id": recipient_id,
@@ -309,7 +297,6 @@ def log_whatsapp_message(recipient_id, phone_number, message_type, message_text,
         return False
 
 def send_whatsapp_message_cloud_api(phone_number, message, recipient_id=None):
-    """Send WhatsApp message using Meta's Cloud API with Supabase logging"""
     try:
         access_token = WHATSAPP_ACCESS_TOKEN
         phone_number_id = WHATSAPP_PHONE_NUMBER_ID
@@ -320,21 +307,15 @@ def send_whatsapp_message_cloud_api(phone_number, message, recipient_id=None):
                 log_whatsapp_message(recipient_id, phone_number, "text", message, "failed", None, error_msg)
             return False, error_msg
         
-        # Clean phone number (remove + if present)
         clean_number = phone_number.replace('+', '').strip()
-        
-        # Prepare the API endpoint
         api_url = f"https://graph.facebook.com/v17.0/{phone_number_id}/messages"
         
-        # Prepare headers
         headers = {
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json"
         }
         
-        # Prepare the message payload
         if len(message) > 4000:
-            # For long messages, truncate
             message = message[:4000] + "\n\n... (truncated - full report in dashboard)"
         
         payload = {
@@ -347,14 +328,12 @@ def send_whatsapp_message_cloud_api(phone_number, message, recipient_id=None):
             }
         }
         
-        # Make the API request
         response = requests.post(api_url, headers=headers, json=payload, timeout=30)
         
         if response.status_code == 200 or response.status_code == 201:
             result = response.json()
             message_id = result.get('messages', [{}])[0].get('id', 'N/A')
             
-            # Log success
             if recipient_id:
                 log_whatsapp_message(
                     recipient_id, 
@@ -370,7 +349,6 @@ def send_whatsapp_message_cloud_api(phone_number, message, recipient_id=None):
             error_data = response.json()
             error_message = error_data.get('error', {}).get('message', 'Unknown error')
             
-            # Log failure
             if recipient_id:
                 log_whatsapp_message(
                     recipient_id, 
@@ -396,7 +374,6 @@ def send_whatsapp_message_cloud_api(phone_number, message, recipient_id=None):
         return False, error_msg
 
 def test_whatsapp_connection():
-    """Test WhatsApp Cloud API connection with provided credentials"""
     try:
         access_token = WHATSAPP_ACCESS_TOKEN
         phone_number_id = WHATSAPP_PHONE_NUMBER_ID
@@ -404,7 +381,6 @@ def test_whatsapp_connection():
         if not access_token or not phone_number_id:
             return False, "WhatsApp credentials not found"
         
-        # Test API connection
         url = f"https://graph.facebook.com/v17.0/{phone_number_id}"
         headers = {"Authorization": f"Bearer {access_token}"}
         
@@ -421,7 +397,6 @@ def test_whatsapp_connection():
         return False, f"❌ Error: {str(e)}"
 
 def format_attendance_report_for_whatsapp(df_emp, df_att, report_type="daily", date_range=None):
-    """Format attendance data for WhatsApp report"""
     today = datetime.now(IST)
     company_name = "JOY CORPORATE SOLUTIONS"
     
@@ -429,7 +404,6 @@ def format_attendance_report_for_whatsapp(df_emp, df_att, report_type="daily", d
         today_str = today.strftime('%Y-%m-%d')
         date_display = today.strftime('%d-%m-%Y')
         
-        # Get today's attendance
         df_att_today = df_att[df_att['date_only'] == today_str]
         
         present_ids = df_att_today[df_att_today['punch_type'].isin(['Punch In', 'QR Code', 'Manual Entry'])]['emp_id'].unique()
@@ -442,26 +416,22 @@ def format_attendance_report_for_whatsapp(df_emp, df_att, report_type="daily", d
         
         df_emp['Today Status'] = df_emp['emp_id'].apply(get_status)
         
-        # Summary statistics
         total_employees = len(df_emp)
         present = df_emp[df_emp['Today Status'] == 'Present'].shape[0]
         absent = df_emp[df_emp['Today Status'] == 'Absent'].shape[0]
         leave = df_emp[df_emp['Today Status'] == 'Leave'].shape[0]
         attendance_rate = round((present / total_employees) * 100 if total_employees > 0 else 0, 1)
         
-        # Build message
         message = f"📊 *{company_name}*\n"
         message += f"📅 *Daily Attendance Report*\n"
         message += f"🗓️ Date: {date_display}\n"
         message += f"{'='*35}\n\n"
-        
         message += f"📌 *Total Employees:* {total_employees}\n"
         message += f"✅ *Present:* {present}\n"
         message += f"❌ *Absent:* {absent}\n"
         message += f"🏠 *On Leave:* {leave}\n"
         message += f"📈 *Attendance Rate:* {attendance_rate}%\n\n"
         
-        # Department-wise breakdown
         if 'department' in df_emp.columns:
             message += f"🏢 *Department-wise Breakdown:*\n"
             dept_summary = df_emp.groupby('department')['Today Status'].value_counts().unstack(fill_value=0)
@@ -472,7 +442,6 @@ def format_attendance_report_for_whatsapp(df_emp, df_att, report_type="daily", d
                 message += f"  • {dept}: {dept_present}/{dept_total} ({dept_rate}%)\n"
             message += "\n"
         
-        # Present employees list
         present_emps = df_emp[df_emp['Today Status'] == 'Present']
         if not present_emps.empty:
             message += f"✅ *Present Employees:*\n"
@@ -483,7 +452,6 @@ def format_attendance_report_for_whatsapp(df_emp, df_att, report_type="daily", d
                 message += f"  • {name} (ID: {emp_id}) - {dept}\n"
             message += "\n"
         
-        # Absent employees list (first 20)
         absent_emps = df_emp[df_emp['Today Status'] == 'Absent']
         if not absent_emps.empty:
             message += f"❌ *Absent Employees:*\n"
@@ -500,7 +468,6 @@ def format_attendance_report_for_whatsapp(df_emp, df_att, report_type="daily", d
                 count += 1
             message += "\n"
         
-        # On leave list
         leave_emps = df_emp[df_emp['Today Status'] == 'Leave']
         if not leave_emps.empty:
             message += f"🏠 *On Leave:*\n"
@@ -518,26 +485,21 @@ def format_attendance_report_for_whatsapp(df_emp, df_att, report_type="daily", d
             start_date, end_date = date_range
             date_display = f"{start_date.strftime('%d-%m-%Y')} to {end_date.strftime('%d-%m-%Y')}"
         else:
-            # Current month
             start_date = today.replace(day=1)
             end_date = today
             date_display = start_date.strftime('%B %Y')
         
-        # Filter attendance for the period
         df_att_period = df_att[
             (df_att['date_only'] >= start_date.strftime('%Y-%m-%d')) &
             (df_att['date_only'] <= end_date.strftime('%Y-%m-%d'))
         ]
         
-        # Calculate monthly stats
         total_days = (end_date - start_date).days + 1
         summary_data = []
         
         for _, emp in df_emp.iterrows():
             emp_att = df_att_period[df_att_period['emp_id'] == emp['emp_id']]
             present_days = emp_att[emp_att['punch_type'].isin(['Punch In', 'QR Code', 'Manual Entry'])]['date_only'].nunique()
-            
-            # Calculate attendance percentage
             attendance_pct = round((present_days / total_days * 100), 1) if total_days > 0 else 0
             
             summary_data.append({
@@ -551,13 +513,11 @@ def format_attendance_report_for_whatsapp(df_emp, df_att, report_type="daily", d
         
         df_summary = pd.DataFrame(summary_data)
         
-        # Build message
         message = f"📊 *{company_name}*\n"
         message += f"📅 *Monthly Attendance Summary*\n"
         message += f"🗓️ {date_display}\n"
         message += f"{'='*35}\n\n"
         
-        # Overall statistics
         total_employees = len(df_summary)
         avg_attendance = df_summary['Attendance %'].mean()
         
@@ -565,21 +525,18 @@ def format_attendance_report_for_whatsapp(df_emp, df_att, report_type="daily", d
         message += f"📈 *Average Attendance:* {round(avg_attendance, 1)}%\n"
         message += f"📅 *Working Days:* {total_days}\n\n"
         
-        # Top performers
         top_5 = df_summary.nlargest(5, 'Attendance %')
         message += f"🏆 *Top Performers:*\n"
         for _, emp in top_5.iterrows():
             message += f"  • {emp['Name']} - {emp['Attendance %']}% ({emp['Present Days']}/{total_days} days)\n"
         message += "\n"
         
-        # Bottom performers
         bottom_5 = df_summary.nsmallest(5, 'Attendance %')
         message += f"⚠️ *Needs Improvement:*\n"
         for _, emp in bottom_5.iterrows():
             message += f"  • {emp['Name']} - {emp['Attendance %']}% ({emp['Present Days']}/{total_days} days)\n"
         message += "\n"
         
-        # Department-wise summary
         if 'Department' in df_summary.columns:
             message += f"🏢 *Department-wise Attendance:*\n"
             dept_summary = df_summary.groupby('Department')['Attendance %'].mean().sort_values(ascending=False)
@@ -593,16 +550,13 @@ def format_attendance_report_for_whatsapp(df_emp, df_att, report_type="daily", d
     return message
 
 def send_whatsapp_report(phone_number, report_type="daily", date_range=None):
-    """Generate and send attendance report via WhatsApp with Supabase logging"""
     try:
-        # Get data
         df_emp = get_all_employees()
         df_att = get_all_attendance()
         
         if df_emp.empty:
             return False, "No employee data available"
         
-        # Get recipient ID if exists
         recipient_id = None
         try:
             res = supabase.table("whatsapp_recipients").select("id").eq("phone_number", phone_number.replace('+', '').strip()).execute()
@@ -611,7 +565,6 @@ def send_whatsapp_report(phone_number, report_type="daily", date_range=None):
         except:
             pass
         
-        # Format report
         if report_type == "daily":
             message = format_attendance_report_for_whatsapp(df_emp, df_att, "daily")
         elif report_type == "monthly":
@@ -619,7 +572,6 @@ def send_whatsapp_report(phone_number, report_type="daily", date_range=None):
         else:
             return False, "Invalid report type"
         
-        # Send via WhatsApp Cloud API
         success, result = send_whatsapp_message_cloud_api(phone_number, message, recipient_id)
         
         if success:
@@ -632,13 +584,10 @@ def send_whatsapp_report(phone_number, report_type="daily", date_range=None):
 
 # --- EARLY LEAVE REQUEST FUNCTIONS ---
 def request_early_leave(emp_id, date_str, reason, requested_by):
-    """Request early leave approval (Dept Admin only)"""
     try:
-        # Check if record exists
         existing = supabase.table("attendance").select("*").eq("emp_id", emp_id).eq("date_only", date_str).execute()
         
         if existing.data:
-            # Update existing record with request
             supabase.table("attendance").update({
                 "early_leave_requested": True,
                 "early_leave_approved": False,
@@ -647,7 +596,6 @@ def request_early_leave(emp_id, date_str, reason, requested_by):
                 "approved_by": ""
             }).eq("emp_id", emp_id).eq("date_only", date_str).execute()
         else:
-            # Create new record with request
             now_ts = datetime.combine(datetime.strptime(date_str, '%Y-%m-%d').date(), datetime.now(IST).time()).isoformat()
             supabase.table("attendance").insert({
                 "emp_id": emp_id,
@@ -666,7 +614,6 @@ def request_early_leave(emp_id, date_str, reason, requested_by):
         return False, f"Error submitting request: {str(e)}"
 
 def approve_early_leave(emp_id, date_str, approved, remarks, approver):
-    """Approve or reject early leave request (HR only)"""
     try:
         supabase.table("attendance").update({
             "early_leave_approved": approved,
@@ -678,9 +625,8 @@ def approve_early_leave(emp_id, date_str, approved, remarks, approver):
     except Exception as e:
         return False, f"Error approving request: {str(e)}"
 
-# --- SEPARATE EARLY LEAVE FUNCTIONS FOR DIFFERENT ROLES ---
+# --- EARLY LEAVE UI FUNCTIONS ---
 def render_dept_request_tab(df_emp_main):
-    """Department Admin - Only can request early leave"""
     st.markdown("##### 📝 Submit Early Leave Request")
     
     if df_emp_main.empty:
@@ -716,7 +662,6 @@ def render_dept_request_tab(df_emp_main):
             else:
                 st.warning("Please fill all required fields.")
     
-    # Show pending requests for this department
     st.markdown("---")
     st.markdown("##### 📋 Your Pending Requests")
     df_att_all = get_all_attendance()
@@ -745,7 +690,6 @@ def render_dept_request_tab(df_emp_main):
             st.info("No pending requests.")
 
 def render_hr_approval_tab(df_att_all, df_emp_main):
-    """HR - Only can approve/reject early leave requests"""
     st.markdown("##### ✅ Approve/Reject Early Leave Requests")
     
     if df_att_all.empty:
@@ -761,7 +705,6 @@ def render_hr_approval_tab(df_att_all, df_emp_main):
         st.info("No pending early leave requests.")
         return
     
-    # Merge with employee data
     pending_requests = pd.merge(
         pending_requests,
         df_emp_main[['emp_id', 'name', 'department']],
@@ -793,7 +736,6 @@ def render_hr_approval_tab(df_att_all, df_emp_main):
         
         if st.form_submit_button("Process Request"):
             if selected_request:
-                # Extract emp_id from selection
                 emp_id_val = selected_request.split("ID: ")[1].split(")")[0]
                 date_val = selected_request.split(" - ")[1]
                 approved = approval_status == "✅ Approve"
@@ -905,16 +847,16 @@ def render_shift_master_ui():
             col1, col2 = st.columns(2)
             with col1:
                 new_shift = st.text_input("New Shift Name")
-                punch_in = st.selectbox("Punch In Time", ALLOWED_TIMES, index=18) # 09:00
-                break_out = st.selectbox("Break Out Time", ALLOWED_TIMES, index=26) # 13:00
+                punch_in = st.selectbox("Punch In Time", ALLOWED_TIMES, index=18)
+                break_out = st.selectbox("Break Out Time", ALLOWED_TIMES, index=26)
             with col2:
                 duration = st.number_input("Standard Working Hours", min_value=1.0, max_value=24.0, value=8.0, step=0.5)
-                punch_out = st.selectbox("Punch Out Time", ALLOWED_TIMES, index=36) # 18:00
-                break_complete = st.selectbox("Break Over Time", ALLOWED_TIMES, index=28) # 14:00
+                punch_out = st.selectbox("Punch Out Time", ALLOWED_TIMES, index=36)
+                break_complete = st.selectbox("Break Over Time", ALLOWED_TIMES, index=28)
                 
             if st.form_submit_button("Add Shift") and new_shift:
                 try:
-                    brk_duration = 60 # Default or calculated
+                    brk_duration = 60
                     supabase.table("shifts").insert({
                         "shift_name": new_shift, "punch_in_time": punch_in, "punch_out_time": punch_out,
                         "break_out_time": break_out, "break_complete_time": break_complete,
@@ -981,20 +923,15 @@ def render_shift_master_ui():
 
 # --- WHATSAPP ADMIN PANEL ---
 def render_whatsapp_admin():
-    """Render WhatsApp Admin panel"""
     st.markdown("### 📱 WhatsApp Cloud API Administration")
     
-    # Initialize tables
-    init_success = initialize_whatsapp_tables()
-    if not init_success:
-        st.warning("⚠️ Could not initialize WhatsApp tables. Please create them manually in Supabase.")
+    initialize_whatsapp_tables()
     
     tab1, tab2, tab3 = st.tabs(["📋 Recipients", "📨 Message Logs", "⚙️ Settings"])
     
     with tab1:
         st.markdown("#### 📋 Manage WhatsApp Recipients")
         
-        # Add recipient form
         with st.expander("➕ Add New Recipient", expanded=False):
             with st.form("add_recipient_form"):
                 c1, c2 = st.columns(2)
@@ -1016,7 +953,6 @@ def render_whatsapp_admin():
                     else:
                         st.warning("Please fill in required fields")
         
-        # Recipients list
         df_recipients = get_whatsapp_recipients()
         if not df_recipients.empty:
             st.dataframe(
@@ -1025,7 +961,6 @@ def render_whatsapp_admin():
                 hide_index=True
             )
             
-            # Remove recipient
             col1, col2 = st.columns([2, 1])
             with col1:
                 recipient_to_remove = st.selectbox(
@@ -1046,8 +981,6 @@ def render_whatsapp_admin():
     
     with tab2:
         st.markdown("#### 📨 WhatsApp Message Logs")
-        
-        # Get message logs
         try:
             logs = supabase.table("whatsapp_messages").select("*").order("created_at", desc=True).limit(100).execute()
             if logs.data:
@@ -1060,7 +993,6 @@ def render_whatsapp_admin():
                     hide_index=True
                 )
                 
-                # Export logs
                 csv = df_logs.to_csv(index=False).encode('utf-8')
                 st.download_button(
                     "📥 Export Logs CSV",
@@ -1076,12 +1008,10 @@ def render_whatsapp_admin():
     with tab3:
         st.markdown("#### ⚙️ WhatsApp Cloud API Configuration")
         
-        # Display current configuration
         col1, col2 = st.columns(2)
         with col1:
             if WHATSAPP_ACCESS_TOKEN:
                 st.success("✅ Access Token configured")
-                # Show masked token
                 masked_token = WHATSAPP_ACCESS_TOKEN[:15] + "..." + WHATSAPP_ACCESS_TOKEN[-10:] if len(WHATSAPP_ACCESS_TOKEN) > 25 else "***"
                 st.code(masked_token, language="text")
             else:
@@ -1098,7 +1028,6 @@ def render_whatsapp_admin():
             else:
                 st.warning("⚠️ Verify Token not configured")
         
-        # Test connection button
         if st.button("🔧 Test WhatsApp Connection"):
             with st.spinner("Testing connection..."):
                 success, message = test_whatsapp_connection()
@@ -1108,13 +1037,11 @@ def render_whatsapp_admin():
                 else:
                     st.error(message)
         
-        # Send test message
         st.markdown("---")
         st.markdown("#### 📤 Send Test Message")
         
         test_phone = st.text_input("📞 Your WhatsApp Number (with country code)", 
-                                  placeholder="+91XXXXXXXXXX",
-                                  help="Enter your phone number to send a test message")
+                                  placeholder="+91XXXXXXXXXX")
         
         test_message = st.text_area("Test Message", 
                                    value="Hello! This is a test message from Joy Corporate Solutions WhatsApp integration. 🎉",
@@ -1209,15 +1136,13 @@ def render_dashboard(role, dept):
     
     whatsapp_col1, whatsapp_col2, whatsapp_col3 = st.columns([1, 1, 1])
     with whatsapp_col1:
-        # Get recipients for quick send
         df_recipients = get_whatsapp_recipients()
         recipient_options = ["Custom Number"] + df_recipients['name'].tolist() if not df_recipients.empty else ["Custom Number"]
         selected_recipient = st.selectbox("👤 Select Recipient", recipient_options)
         
         if selected_recipient == "Custom Number":
             whatsapp_phone = st.text_input("📞 Phone Number", 
-                                          placeholder="+91XXXXXXXXXX",
-                                          help="Enter phone number in international format")
+                                          placeholder="+91XXXXXXXXXX")
         else:
             recipient_data = df_recipients[df_recipients['name'] == selected_recipient]
             if not recipient_data.empty:
@@ -1244,7 +1169,7 @@ def render_dashboard(role, dept):
                         success, message = send_whatsapp_report(whatsapp_phone, "daily")
                     elif report_type_whatsapp == "Monthly Report":
                         success, message = send_whatsapp_report(whatsapp_phone, "monthly")
-                    else:  # Custom Date Range
+                    else:
                         if 'custom_start' in locals() and 'custom_end' in locals():
                             success, message = send_whatsapp_report(whatsapp_phone, "monthly", (custom_start, custom_end))
                         else:
@@ -1295,7 +1220,6 @@ def render_dashboard(role, dept):
         with d_tab3:
             st.markdown("#### 👤 Individual Attendance Summary")
             
-            # Date range selection with default "Current Month"
             today = datetime.now(IST).date()
             first_day_of_month = today.replace(day=1)
             
@@ -1319,13 +1243,11 @@ def render_dashboard(role, dept):
             
             if st.button("📊 Generate Individual Attendance Summary", use_container_width=True):
                 if not df_att_dash.empty:
-                    # Filter attendance data by date range
                     df_att_filtered = df_att_dash[
                         (df_att_dash['date_only'] >= summary_start.strftime('%Y-%m-%d')) &
                         (df_att_dash['date_only'] <= summary_end.strftime('%Y-%m-%d'))
                     ].copy()
                     
-                    # Create summary for each employee
                     summary_data = []
                     
                     for _, emp in df_dash_emp.iterrows():
@@ -1335,20 +1257,16 @@ def render_dashboard(role, dept):
                         emp_shift = emp.get('shift', 'N/A')
                         emp_joining_date = emp.get('joining_date', None)
                         
-                        # Get attendance records for this employee
                         emp_att = df_att_filtered[df_att_filtered['emp_id'] == emp_id]
                         
-                        # Count present days (Punch In, QR Code, Manual Entry)
                         present_days = emp_att[
                             emp_att['punch_type'].isin(['Punch In', 'QR Code', 'Manual Entry'])
                         ]['date_only'].nunique()
                         
-                        # Count leave days
                         leave_days = emp_att[
                             emp_att['punch_type'] == 'Leave'
                         ]['date_only'].nunique()
                         
-                        # Calculate working days based on employee's joining date
                         if emp_joining_date:
                             try:
                                 joining_date = pd.to_datetime(emp_joining_date).date()
@@ -1357,24 +1275,17 @@ def render_dashboard(role, dept):
                         else:
                             joining_date = summary_start
                         
-                        # Determine the actual start date for this employee
                         actual_start = max(joining_date, summary_start)
                         
-                        # If employee joined after end date, skip
                         if actual_start > summary_end:
                             continue
                         
-                        # Get all days in the range
                         date_range = pd.date_range(actual_start, summary_end)
                         total_days = len(date_range)
                         
-                        # Absent days = total working days - present days - leave days
                         absent_days = total_days - present_days - leave_days
-                        
-                        # Calculate attendance percentage
                         attendance_pct = round((present_days / total_days * 100), 1) if total_days > 0 else 0
                         
-                        # Determine status based on attendance percentage
                         if attendance_pct >= 90:
                             status = "🟢 Excellent"
                         elif attendance_pct >= 75:
@@ -1398,14 +1309,11 @@ def render_dashboard(role, dept):
                         })
                     
                     if summary_data:
-                        # Create DataFrame and sort by attendance percentage
                         df_summary = pd.DataFrame(summary_data)
                         df_summary = df_summary.sort_values('Attendance %', ascending=False)
                         
-                        # Display the summary
                         st.dataframe(df_summary, use_container_width=True, hide_index=True)
                         
-                        # Download button
                         csv = df_summary.to_csv(index=False).encode('utf-8')
                         st.download_button(
                             "📥 Download Attendance Summary CSV",
@@ -1414,7 +1322,6 @@ def render_dashboard(role, dept):
                             mime="text/csv"
                         )
                         
-                        # Show some statistics
                         st.write("---")
                         st.markdown("#### 📊 Summary Statistics")
                         col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
@@ -1433,19 +1340,13 @@ def render_dashboard(role, dept):
                         with col_stat4:
                             st.metric("Needs Improvement", worst_employee)
                         
-                        # Show distribution chart
                         st.write("---")
                         st.markdown("#### 📊 Attendance Distribution")
-                        
-                        # Count employees by status
                         status_counts = df_summary['Status'].value_counts()
-                        
-                        # Create bar chart data
                         chart_data = pd.DataFrame({
                             'Status': status_counts.index,
                             'Count': status_counts.values
                         })
-                        
                         st.bar_chart(chart_data.set_index('Status'))
                     else:
                         st.info("No employees found in the selected date range.")
@@ -1453,7 +1354,6 @@ def render_dashboard(role, dept):
                     st.info("No attendance data available.")
 
 # --- MAIN APP LOGIC ---
-# SESSION STATE is already initialized at the top
 
 # ==========================================
 #         STATE 1: MAIN LOGIN SCREEN
@@ -1463,7 +1363,7 @@ if not st.session_state.hr_logged_in and not st.session_state.super_logged_in:
     with col_center:
         if os.path.exists(logo_path):
             logo_col1, logo_col2, logo_col3 = st.columns([5, 2, 5])
-            with logo_col2: st.image(logo_path, use_container_width=True)
+            with logo_col2: st.image(logo_path, use_column_width=True)  # FIXED: use_column_width instead of use_container_width
                 
         st.markdown("<h1>Joy Corporate Solutions</h1>", unsafe_allow_html=True)
         st.markdown("<p style='font-size: 18px;'>Enterprise Attendance Portal</p><br>", unsafe_allow_html=True)
@@ -1723,15 +1623,12 @@ elif st.session_state.hr_logged_in:
                 st.markdown("#### 🚪 Early Leave Management")
                 df_att_all = get_all_attendance()
                 
-                # Check user role - show appropriate tabs
                 if st.session_state.user_role == "HR":
-                    # HR sees only approval tab
                     st.info("👤 You are logged in as HR - you can approve or reject early leave requests.")
                     st.markdown("---")
                     render_hr_approval_tab(df_att_all, df_emp_main)
                 
                 elif st.session_state.user_role == "Dept Admin":
-                    # Dept Admin sees only request tab
                     st.info("👤 You are logged in as Department Incharge - you can submit early leave requests.")
                     st.markdown("---")
                     render_dept_request_tab(df_emp_main)
@@ -1739,7 +1636,7 @@ elif st.session_state.hr_logged_in:
                 else:
                     st.warning("⚠️ Your role doesn't have permission for early leave management.")
 
-        # --- VIEW PAYROLL & LOGS WITH 30-MIN ROUNDED OVERTIME ---
+        # --- VIEW PAYROLL & LOGS ---
         elif hr_action == "📊 Payroll & Logs":
             st.markdown("### 📊 Automated Payroll & Attendance Logs (8Hr Std + 30m Rounded OT)")
             
@@ -1828,7 +1725,6 @@ elif st.session_state.hr_logged_in:
                                 df_merged['Effective Hrs'] = df_merged['Worked Hrs']
                                 df_merged.loc[df_merged['Is_Early_Penalized'], 'Effective Hrs'] = df_merged['Effective Hrs'] - 1.0 
                                 
-                                # 30-MINUTE ROUNDED OVERTIME CALCULATION
                                 def round_to_nearest_30mins(val):
                                     if pd.isna(val) or val <= 0: return 0.0
                                     return round(np.round(val * 2) / 2, 2)
