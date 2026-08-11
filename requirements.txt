@@ -2,5 +2,10 @@ streamlit
 supabase
 qrcode
 pandas
+numpy
 Pillow
 streamlit-qrcode-scanner
+requests
+fastapi
+uvicorn
+python-multipart
