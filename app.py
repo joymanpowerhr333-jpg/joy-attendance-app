@@ -1439,8 +1439,7 @@ elif st.session_state.hr_logged_in:
                     st.write("---")
                     if st.button("📸 Scan Next Employee", use_container_width=True):
                         st.session_state.last_scanned_id = None                        
-                        st.session_state.success_msg = 
-                        st.session_state.error_msg = ""
+                        st.session_state.success_msg = st.session_state.error_msg = ""
                         st.session_state.camera_key += 1
                         st.rerun()
                 else:
